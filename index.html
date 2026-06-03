@@ -508,8 +508,23 @@ function enterModule(m){
     nameSel.style.display="none"; nameSel.value="";
   }
   const sel=document.getElementById("f-server");
-  sel.innerHTML='<option value="">Seleccionar…</option>'+(SERVERS[m]||[]).map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
-  if((SERVERS[m]||[]).length===1) sel.value=SERVERS[m][0];
+  const srvList=SERVERS[m]||[];
+  sel.innerHTML='<option value="">Seleccionar…</option>'+srvList.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  const serverWrap=sel.closest("div");
+  if(srvList.length===1){
+    sel.value=srvList[0];
+    if(serverWrap) serverWrap.style.display="none";
+  } else {
+    if(serverWrap) serverWrap.style.display="";
+  }
+  if(m==="casita"){
+    nameInp.style.display="none"; nameInp.value="";
+    nameSel.style.display="block";
+    nameSel.innerHTML='<option value="">Seleccionar…</option>'+(SERVERS.casita||[]).map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  } else {
+    nameInp.style.display="block"; nameInp.placeholder=m==="farm"?"Nombre del cliente":"Nombre del huésped";
+    nameSel.style.display="none"; nameSel.value="";
+  }
   document.getElementById("f-date").value=today();
   document.getElementById("f-coin").value=m==="casita"?"CRC":"USD";
   document.getElementById("f-device").value="Cash";
@@ -547,7 +562,7 @@ function switchView(v,btn){
 function buildMenuHTML(){
   return Object.entries(MENUS[S.mod]||{}).map(([cat,its])=>
     `<div class="drop-cat">${esc(cat)}</div>`+
-    its.map(i=>`<div class="drop-item" data-name="${esc(i.name)}" data-price="${i.price}" data-tax="${i.tax_price}" data-cat="${esc(cat)}">${esc(i.name)}<span style="font-weight:700">$${i.price.toFixed(2)}</span></div>`).join("")
+    its.map(i=>`<div class="drop-item" data-name="${esc(i.name)}" data-price="${i.price}" data-tax="${i.tax_price}" data-cat="${esc(cat)}">${esc(i.name)}${i.price>0?`<span style="font-weight:700;font-size:12px;opacity:.75"> ${i.price.toFixed(2)}</span>`:''}</div>`).join("")
   ).join("");
 }
 
