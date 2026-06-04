@@ -571,15 +571,14 @@ async function sendToSheets(entry){
   }
 }
 async function sendTiquete(data){
+  showToast("Guardando tiquete…",1500);
   try{
     const res=await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({action:"saveTiquete",...data})})});
     const d=await res.json();
-    if(d.status!=="ok") showToast("⚠ Error tiquete: "+d.message,5000);
+    if(d.status==="ok") showToast("✓ Tiquete guardado en spreadsheet",3000);
+    else showToast("⚠ Error tiquete: "+d.message,6000);
   }catch(err){
-    showToast("⚠ Sin conexión — tiquete no guardado",4000);
-    const q=JSON.parse(localStorage.getItem("tm_queue_tiq")||"[]");
-    q.push({action:"saveTiquete",...data});
-    try{localStorage.setItem("tm_queue_tiq",JSON.stringify(q));}catch(e){}
+    showToast("⚠ Error de conexión: "+err.message,6000);
   }
 }
 async function sendFactura(data){
