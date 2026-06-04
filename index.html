@@ -66,6 +66,13 @@ input,select,button{font-family:Georgia,serif}
 .sum-lbl{font-size:11px;color:var(--pm);text-transform:uppercase;letter-spacing:.05em}
 .sum-val{font-size:16px;font-weight:700}
 .sum-total{font-size:20px;font-weight:800;color:var(--pr)}
+/* ── Documento section ── */
+.doc-section{margin-top:20px;padding-top:20px;border-top:1px solid rgba(0,0,0,.08)}
+.doc-options{display:flex;gap:10px;margin-top:8px;margin-bottom:12px;flex-wrap:wrap}
+.doc-opt{display:flex;align-items:center;gap:8px;cursor:pointer;padding:9px 18px;border-radius:10px;border:2px solid var(--pb);background:var(--pll);color:var(--pr);font-size:13px;font-weight:600;transition:all .2s;user-select:none}
+.doc-opt.active{background:var(--pr);color:#fff;border-color:var(--pr)}
+.factura-fields{border-radius:12px;padding:16px;background:var(--pll);border:1px solid var(--pb)}
+/* ── Buttons ── */
 .save-btn{border:none;padding:11px 32px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;margin-top:20px;background:var(--pr);color:#fff}
 .cancel-btn{padding:11px 20px;border-radius:10px;font-weight:600;font-size:14px;cursor:pointer;margin-top:20px;margin-left:10px;background:var(--pll);color:var(--pr);border:1px solid var(--pb)}
 .filter-row{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
@@ -217,6 +224,27 @@ table{width:100%;border-collapse:collapse;background:#fff}
           <div class="sum-col"><div class="sum-lbl">IVA (13%)</div><div class="sum-val" id="sum-tax"></div></div>
           <div class="sum-col"><div class="sum-lbl" style="font-weight:700">Total</div><div class="sum-total" id="sum-tot"></div></div>
         </div>
+
+        <!-- Documento section (solo para Hospitality, F&B, Farm) -->
+        <div class="doc-section" id="doc-section" style="display:none">
+          <label class="lbl">DOCUMENTO</label>
+          <div class="doc-options">
+            <div class="doc-opt active" id="opt-tiquete" onclick="selectDocType('tiquete')">🧾 Tiquete Electrónico</div>
+            <div class="doc-opt"        id="opt-factura" onclick="selectDocType('factura')">📄 Factura Electrónica</div>
+          </div>
+          <div id="factura-fields" style="display:none">
+            <div class="factura-fields">
+              <div class="grid-4">
+                <div style="grid-column:1/-1"><label class="lbl">NOMBRE (FACTURA)</label><input type="text" class="inp" id="fac-nombre" placeholder="Nombre del cliente o empresa"></div>
+                <div><label class="lbl">TIPO CÉDULA</label><select class="inp" id="fac-tipo"><option value="Física">Física</option><option value="Jurídica">Jurídica</option></select></div>
+                <div><label class="lbl">CÉDULA</label><input type="text" class="inp" id="fac-cedula" placeholder="Número de cédula"></div>
+                <div><label class="lbl">CORREO</label><input type="email" class="inp" id="fac-correo" placeholder="correo@ejemplo.com"></div>
+                <div style="grid-column:1/-1"><label class="lbl">ACTIVIDAD ECONÓMICA</label><input type="text" class="inp" id="fac-actividad" placeholder="Ej: Venta de productos orgánicos"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div>
           <button class="save-btn"   id="save-btn">Guardar Entrada</button>
           <button class="cancel-btn" id="cancel-btn" style="display:none">Cancelar</button>
@@ -244,15 +272,19 @@ table{width:100%;border-collapse:collapse;background:#fff}
 <script>
 // ─── Config ────────────────────────────────────────────────────
 const SHEETS_URL = "https://script.google.com/macros/s/AKfycbw09jotEtJM4fDeE8MIThWbRKwJObNiO_JU5oU5crANaYW6knThsXnsJc1z7ZtK5Ey-/exec";
-const THEMES    = {hospitality:"t-hosp",fb:"t-fb",farm:"t-farm",casita:"t-casita"};
-const MOD_LBL   = {hospitality:"Hospitality",fb:"F&B",farm:"Farm",casita:"Casita Azul"};
-// Módulos con precios nativos en CRC (sin conversión desde USD)
-const CRC_MODULES = ['casita','farm'];
+const THEMES      = {hospitality:"t-hosp",fb:"t-fb",farm:"t-farm",casita:"t-casita"};
+const MOD_LBL     = {hospitality:"Hospitality",fb:"F&B",farm:"Farm",casita:"Casita Azul"};
+const CRC_MODULES     = ['casita','farm'];
+const FACTURA_MODULES = ['hospitality','fb','farm'];
+const COMPANY = {
+  nombre: "Tierramor Hospitality Limitada",
+  direccion: "Santa Cruz, Guanacaste",
+  correo: "ns@tierramor.cr"
+};
 
-// ─── Dynamic data (from Sheets) ────────────────────────────────
-let MENUS   = {hospitality:{},fb:{},farm:{},casita:{}};
-let CABYS   = {};
-let SERVERS = {hospitality:[],fb:[],farm:[],casita:[]};
+let MENUS    = {hospitality:{},fb:{},farm:{},casita:{}};
+let CABYS    = {};
+let SERVERS  = {hospitality:[],fb:[],farm:[],casita:[]};
 let ALL_STAFF = [];
 
 // ─── Fallback data ─────────────────────────────────────────────
@@ -291,7 +323,7 @@ const FB_CABYS = {
   "Toothbrush":"42142100000000","Headlamp":"39112000000000","Sanitary pads":"53131600000000","Earplugs":"42143500000000",
   "Dorm Casita":"55130000000000","Standard Casita":"55130000000000","King Suite Casita":"55130000000000",
   "Bocashi (kg)":"31160000000000","Bocashi saco (25 kg)":"31160000000000","Potting soil mix (40L)":"31160000000000",
-  "MM líquido (L)":"31160000000000","Emulsión de pescado (L)":"31160000000000","Emulsión pescado (gal)":"31160000000000",
+  "MM líquido (L)":"31160000000000","Emulsión de pescado (L)":"31160000000000",
   "1 Tiquete":"56110000000000"
 };
 
@@ -310,7 +342,22 @@ const S = {
 const esc = s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 const saveE  = ()=>localStorage.setItem("tm_entries_"+S.mod,JSON.stringify(S.entries[S.mod]));
 const getE   = ()=>S.entries[S.mod]||[];
-const today  = ()=>new Date().toISOString().slice(0,10);
+// Timezone-safe today
+function today(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// Tiquete number: TM-DDMMAAAA-NNN (daily counter)
+function nextTiqueteNum(){
+  const d=new Date();
+  const dd=String(d.getDate()).padStart(2,'0');
+  const mm=String(d.getMonth()+1).padStart(2,'0');
+  const yyyy=d.getFullYear();
+  const key=`tm_tiq_${yyyy}${mm}${dd}`;
+  const n=Number(localStorage.getItem(key)||0)+1;
+  try{localStorage.setItem(key,n);}catch(e){}
+  return `TM-${dd}${mm}${yyyy}-${String(n).padStart(3,'0')}`;
+}
 const uid    = ()=>(crypto.randomUUID?crypto.randomUUID():Date.now()+Math.random());
 const isCrcMod = ()=>CRC_MODULES.includes(S.mod);
 function fmt(v,coin){
@@ -335,10 +382,102 @@ function toggleRef(){
   document.getElementById("ref-wrap").style.display=(dev==="Card"||dev==="Sinpe Móvil")?"block":"none";
   document.getElementById("f-ref").placeholder=dev==="Card"?"Ref / últimos 4 dígitos":"Ref Sinpe Móvil";
 }
-// Convierte precio del catálogo a la moneda seleccionada
 function convertCatalogPrice(price,coin){
   if(isCrcMod()) return coin==="CRC"?price:Math.round(price/S.rate*100)/100;
   return coin==="CRC"?Math.round(price*S.rate):price;
+}
+
+// ─── Documento ──────────────────────────────────────────────────
+function selectDocType(type){
+  document.getElementById("opt-tiquete").classList.toggle("active",type==="tiquete");
+  document.getElementById("opt-factura").classList.toggle("active",type==="factura");
+  document.getElementById("factura-fields").style.display=type==="factura"?"block":"none";
+  if(type==="factura"){
+    document.getElementById("fac-nombre").value=getName();
+  }
+}
+function getDocType(){
+  return document.getElementById("opt-factura").classList.contains("active")?"factura":"tiquete";
+}
+
+// ─── PDF Tiquete ────────────────────────────────────────────────
+function generateTiquetePDF(entry,tiqNum){
+  const logo=localStorage.getItem("tm_logo")||"";
+  const coin=entry.coin;
+  const [y,mo,da]=entry.date.split("-");
+  const dateStr=`${da}/${mo}/${y}`;
+  const itemRows=entry.items.map(i=>`
+    <tr>
+      <td>${esc(i.product)}</td>
+      <td style="text-align:center">${i.qty||1}</td>
+      <td style="text-align:right">${fmt(i.price,coin)}</td>
+      <td style="text-align:right">${fmt(i.total,coin)}</td>
+    </tr>`).join("");
+  const html=`<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><title>Tiquete ${esc(tiqNum)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Georgia,serif;color:#3a2e28;background:#f5f0eb;padding:32px}
+.page{max-width:680px;margin:0 auto;background:#faf7f2;border:1px solid #d4c8b8;border-radius:8px;padding:40px}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;padding-bottom:20px;border-bottom:3px solid #544236}
+.co h1{font-size:20px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:#544236}
+.co p{font-size:12px;color:#7a6a5a;margin-top:3px}
+.logo{height:56px;object-fit:contain;margin-bottom:8px;display:block}
+.tiq-info{text-align:right}
+.tiq-info p{font-size:13px;margin-bottom:3px;color:#3a2e28}
+.tiq-info strong{color:#544236}
+table{width:100%;border-collapse:collapse;margin:20px 0}
+thead tr{background:#544236;color:#fff}
+thead th{padding:9px 12px;text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:700}
+thead th:nth-child(n+2){text-align:center}
+thead th:nth-child(n+3){text-align:right}
+tbody tr:nth-child(even){background:#f0ebe4}
+tbody td{padding:8px 12px;font-size:13px;border-bottom:1px solid #e0d8ce}
+tbody td:nth-child(2){text-align:center}
+tbody td:nth-child(3),tbody td:nth-child(4){text-align:right}
+.totals{display:flex;justify-content:flex-end;margin-top:8px}
+.tot-box{width:240px}
+.tot-row{display:flex;justify-content:space-between;padding:5px 0;font-size:13px;border-bottom:1px solid #e0d8ce}
+.tot-final{display:flex;justify-content:space-between;font-weight:800;font-size:16px;color:#544236;background:#e8e0d4;padding:8px 10px;border-radius:6px;margin-top:6px}
+.foot{margin-top:28px;padding-top:14px;border-top:1px solid #d4c8b8;font-size:11px;color:#9a8a7a;text-align:center}
+.print-btn{display:block;margin:24px auto 0;padding:10px 28px;background:#544236;color:#fff;border:none;border-radius:8px;font-family:Georgia,serif;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.05em}
+@media print{.print-btn{display:none}body{background:none;padding:0}.page{border:none;padding:20px;border-radius:0}}
+</style></head><body>
+<div class="page">
+  <div class="hdr">
+    <div class="co">
+      ${logo?`<img src="${logo}" class="logo">`:""}
+      <h1>${esc(COMPANY.nombre)}</h1>
+      <p>${esc(COMPANY.direccion)}</p>
+      <p>${esc(COMPANY.correo)}</p>
+    </div>
+    <div class="tiq-info">
+      <p><strong>Tiquete No.:</strong> ${esc(tiqNum)}</p>
+      <p><strong>Fecha:</strong> ${dateStr}</p>
+      <p><strong>Módulo:</strong> ${esc(MOD_LBL[entry.module]||entry.module)}</p>
+      <p><strong>Cliente:</strong> ${esc(entry.name)}</p>
+      <p><strong>Responsable:</strong> ${esc(entry.server||"")}</p>
+      <p><strong>Pago:</strong> ${esc(entry.device)}</p>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Descripción</th><th style="text-align:center">Cant.</th><th style="text-align:right">Precio Unit.</th><th style="text-align:right">Total</th></tr></thead>
+    <tbody>${itemRows}</tbody>
+  </table>
+  <div class="totals">
+    <div class="tot-box">
+      <div class="tot-row"><span>Subtotal</span><span>${fmt(entry.orderNet,coin)}</span></div>
+      <div class="tot-row"><span>IVA (13%)</span><span>${fmt(entry.orderTax,coin)}</span></div>
+      <div class="tot-final"><span>Total</span><span>${fmt(entry.orderTotal,coin)}</span></div>
+    </div>
+  </div>
+  <div class="foot"><p>Gracias por su preferencia · ${esc(COMPANY.nombre)} · ${esc(COMPANY.direccion)}</p></div>
+</div>
+<button class="print-btn" onclick="window.print()">🖨 Imprimir / Guardar como PDF</button>
+</body></html>`;
+  const win=window.open("","_blank","width=760,height=920");
+  if(win){win.document.write(html);win.document.close();}
+  else showToast("Activa las ventanas emergentes para generar el PDF",4000);
 }
 
 // ─── Pricing ────────────────────────────────────────────────────
@@ -348,9 +487,7 @@ function lineTotal(it){
   const tp=it.tax_price>0?it.tax_price:manualTax(Number(it.unitPrice)||0);
   return Math.round(tp*qty*100)/100;
 }
-function lineNet(it){
-  return Math.round((Number(it.unitPrice)||0)*(Number(it.qty)||1)*100)/100;
-}
+function lineNet(it){return Math.round((Number(it.unitPrice)||0)*(Number(it.qty)||1)*100)/100;}
 
 // ─── Catalog ────────────────────────────────────────────────────
 async function loadCatalog(){
@@ -433,6 +570,20 @@ async function sendToSheets(entry){
     updateQBadge();showToast("Sin conexión — se enviará automáticamente ⏳",3500);
   }
 }
+async function sendTiquete(data){
+  try{
+    await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({action:"saveTiquete",...data})})});
+  }catch{
+    const q=JSON.parse(localStorage.getItem("tm_queue_tiq")||"[]");
+    q.push({action:"saveTiquete",...data});
+    try{localStorage.setItem("tm_queue_tiq",JSON.stringify(q));}catch(e){}
+  }
+}
+async function sendFactura(data){
+  try{
+    await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({action:"saveFactura",...data})})});
+  }catch{}
+}
 
 // ─── PIN ────────────────────────────────────────────────────────
 function requestPin(title,sub,cb){
@@ -489,21 +640,13 @@ function enterModule(m){
   document.getElementById("rate-disp").textContent=S.rate;
   document.getElementById("lbl-server").textContent=(m==="fb"||m==="casita")?"ATENDIDO POR":"RESPONSABLE";
   document.getElementById("lbl-guest").textContent=m==="farm"?"NOMBRE CLIENTE":m==="casita"?"COLABORADOR":"NOMBRE HUÉSPED";
-
-  // Server dropdown
   const sel=document.getElementById("f-server");
   const srvList=SERVERS[m]||[];
   sel.innerHTML='<option value="">Seleccionar…</option>'+srvList.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
   const serverWrap=document.getElementById("server-wrap");
-  // Ocultar servidor solo si hay exactamente 1 asignado Y no es Casita
-  if(srvList.length===1 && m!=="casita"){
-    sel.value=srvList[0];
-    if(serverWrap) serverWrap.style.display="none";
-  }else{
-    if(serverWrap) serverWrap.style.display="";
-  }
-
-  // Name / collaborator field
+  if(srvList.length===1&&m!=="casita"){
+    sel.value=srvList[0];if(serverWrap) serverWrap.style.display="none";
+  }else{if(serverWrap) serverWrap.style.display="";}
   const nameInp=document.getElementById("f-name");
   const nameSel=document.getElementById("f-name-sel");
   if(m==="casita"){
@@ -515,8 +658,6 @@ function enterModule(m){
     nameInp.style.display="block";nameInp.placeholder=m==="farm"?"Nombre del cliente":"Nombre del huésped";
     nameSel.style.display="none";nameSel.value="";
   }
-
-  // Coin default: CRC for farm & casita, USD for the rest
   document.getElementById("f-coin").value=CRC_MODULES.includes(m)?"CRC":"USD";
   document.getElementById("f-device").value="Cash";
   document.getElementById("f-ref").value="";
@@ -526,6 +667,9 @@ function enterModule(m){
   document.getElementById("ord-summary").style.display="none";
   document.getElementById("form-title").textContent="Nueva Entrada";
   document.getElementById("cancel-btn").style.display="none";
+  // Documento section
+  document.getElementById("doc-section").style.display=FACTURA_MODULES.includes(m)?"block":"none";
+  selectDocType("tiquete");
   S.items=[];S.itemCount=0;S.editId=null;
   addItem();S.filterPeriod="all";
   switchView("entry",document.getElementById("nav-entry"));
@@ -554,7 +698,7 @@ function buildMenuHTML(){
   const crc=isCrcMod();
   return Object.entries(MENUS[S.mod]||{}).map(([cat,its])=>
     `<div class="drop-cat">${esc(cat)}</div>`+
-    its.map(i=>`<div class="drop-item" data-name="${esc(i.name)}" data-price="${i.price}" data-tax="${i.tax_price}" data-cat="${esc(cat)}">${esc(i.name)}${i.price>0?`<span style="font-weight:700;font-size:12px;opacity:.75"> ${crc?'₡'+Math.round(i.price).toLocaleString('es-CR'):'$'+i.price.toFixed(2)}</span>`:''}</div>`).join("")
+    its.map(i=>`<div class="drop-item" data-name="${esc(i.name)}" data-price="${i.price}" data-tax="${i.tax_price}" data-cat="${esc(cat)}">${esc(i.name)}${i.price>0?`<span style="font-weight:700;font-size:12px;opacity:.75"> ${crc?"₡"+Math.round(i.price).toLocaleString("es-CR"):"$"+i.price.toFixed(2)}</span>`:""}</div>`).join("")
   ).join("");
 }
 
@@ -645,7 +789,7 @@ function removeItem(id){
 function updateRmBtns(){document.querySelectorAll(".rm-btn").forEach(b=>b.style.display=S.items.length>1?"inline":"none");}
 function renumberItems(){S.items.forEach((it,idx)=>{const l=document.querySelector("#item-"+it.id+" .item-lbl");if(l) l.textContent="ÍTEM "+(idx+1);});}
 
-// ─── Save / Reset ───────────────────────────────────────────────
+// ─── Save ───────────────────────────────────────────────────────
 function saveEntry(){
   const server=document.getElementById("f-server").value;
   const srvList=SERVERS[S.mod]||[];
@@ -654,11 +798,19 @@ function saveEntry(){
   if(!name){showToast("El nombre es requerido.");return;}
   const valid=S.items.filter(i=>i.product&&(Number(i.unitPrice)>0||Number(i.tax_price)>0));
   if(!valid.length){showToast("Agrega al menos un producto con precio.");return;}
+
+  // Validar factura si está seleccionada
+  const docType=FACTURA_MODULES.includes(S.mod)?getDocType():null;
+  if(docType==="factura"){
+    const fn=document.getElementById("fac-nombre").value.trim();
+    const fc=document.getElementById("fac-cedula").value.trim();
+    const fe=document.getElementById("fac-correo").value.trim();
+    if(!fn||!fc||!fe){showToast("Completa Nombre, Cédula y Correo para la factura.");return;}
+  }
+
   const coin=document.getElementById("f-coin").value;
   const eItems=valid.map(i=>{
-    const qty=Number(i.qty)||1;
-    const net=Number(i.unitPrice)||0;
-    const tot=lineTotal(i);
+    const qty=Number(i.qty)||1,net=Number(i.unitPrice)||0,tot=lineTotal(i);
     return{product:i.product,category:i.category,cabys:getCabys(i.product),price:Math.round(net*qty*100)/100,tax:Math.round((tot-(net*qty))*100)/100,total:tot,qty};
   });
   const orderNet  =eItems.reduce((s,i)=>Math.round((s+i.price)*100)/100,0);
@@ -674,6 +826,7 @@ function saveEntry(){
     orderTax:Math.round((orderTotal-orderNet)*100)/100,
     orderTotal,rateAtTime:S.rate
   };
+
   if(S.editId){
     S.entries[S.mod]=S.entries[S.mod].map(e=>e.id===S.editId?entry:e);
     S.editId=null;
@@ -683,9 +836,23 @@ function saveEntry(){
   }else{
     S.entries[S.mod]=[entry,...S.entries[S.mod]];
     sendToSheets(entry);
+
+    // Documentos (solo nuevas entradas, no ediciones)
+    if(docType){
+      const tiqNum=nextTiqueteNum();
+      // Guardar en TIQUETE ELECTRONICO
+      sendTiquete({fecha:entry.date,modulo:MOD_LBL[S.mod],nombre:entry.name,subtotal:entry.orderNet,iva:entry.orderTax,total:entry.orderTotal,id:entry.id,device:entry.device});
+      // Si es factura, guardar también en FACTURAS
+      if(docType==="factura"){
+        sendFactura({date:entry.date,id:entry.id,module:MOD_LBL[S.mod],nombre:document.getElementById("fac-nombre").value.trim(),tipo:document.getElementById("fac-tipo").value,cedula:document.getElementById("fac-cedula").value.trim(),correo:document.getElementById("fac-correo").value.trim(),actividad:document.getElementById("fac-actividad").value.trim(),total:entry.orderTotal});
+      }
+      // Generar PDF del tiquete siempre
+      generateTiquetePDF(entry,tiqNum);
+    }
   }
   saveE();resetForm();
 }
+
 function resetForm(){
   document.getElementById("f-server").value="";
   document.getElementById("f-date").value=today();
@@ -697,6 +864,7 @@ function resetForm(){
   document.getElementById("ref-wrap").style.display="none";
   document.getElementById("items-cont").innerHTML="";
   document.getElementById("ord-summary").style.display="none";
+  if(FACTURA_MODULES.includes(S.mod)) selectDocType("tiquete");
   S.items=[];S.itemCount=0;
   const srvList=SERVERS[S.mod]||[];
   if(srvList.length===1) document.getElementById("f-server").value=srvList[0];
