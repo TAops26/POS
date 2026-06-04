@@ -572,8 +572,11 @@ async function sendToSheets(entry){
 }
 async function sendTiquete(data){
   try{
-    await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({action:"saveTiquete",...data})})});
-  }catch{
+    const res=await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({action:"saveTiquete",...data})})});
+    const d=await res.json();
+    if(d.status!=="ok") showToast("⚠ Error tiquete: "+d.message,5000);
+  }catch(err){
+    showToast("⚠ Sin conexión — tiquete no guardado",4000);
     const q=JSON.parse(localStorage.getItem("tm_queue_tiq")||"[]");
     q.push({action:"saveTiquete",...data});
     try{localStorage.setItem("tm_queue_tiq",JSON.stringify(q));}catch(e){}
@@ -658,6 +661,7 @@ function enterModule(m){
     nameInp.style.display="block";nameInp.placeholder=m==="farm"?"Nombre del cliente":"Nombre del huésped";
     nameSel.style.display="none";nameSel.value="";
   }
+  document.getElementById("f-date").value=today();
   document.getElementById("f-coin").value=CRC_MODULES.includes(m)?"CRC":"USD";
   document.getElementById("f-device").value="Cash";
   document.getElementById("f-ref").value="";
