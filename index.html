@@ -8,14 +8,10 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Georgia,serif;color:#3a2e28;min-height:100vh;background:#E8E2D1}
 input,select,button{font-family:Georgia,serif}
-
-/* ── Theme variables ── */
 .t-hosp  {--pr:#735145;--pl:#f0e8e3;--pll:#f8f3f0;--pb:#c5b0a5;--pm:#9a7a6a;--bg:#f5f0ed}
 .t-fb    {--pr:#995C44;--pl:#f0e5de;--pll:#f8f2ef;--pb:#d4b0a0;--pm:#b07860;--bg:#faf5f2}
 .t-farm  {--pr:#76724E;--pl:#eaead0;--pll:#f4f4ec;--pb:#c0c090;--pm:#8a8860;--bg:#f4f4ec}
 .t-casita{--pr:#717F7E;--pl:#dde8e8;--pll:#f0f5f5;--pb:#aac0c0;--pm:#889e9e;--bg:#f2f5f5}
-
-/* ── Selector ── */
 .sel-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:40px 20px;background:#E8E2D1}
 .sel-logo-wrap{margin-bottom:8px;display:flex;align-items:center;justify-content:center}
 .sel-title{font-size:36px;font-weight:900;color:#544236;letter-spacing:.18em;text-transform:uppercase;margin-top:8px}
@@ -33,8 +29,6 @@ input,select,button{font-family:Georgia,serif}
 .cat-status{font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-top:14px;color:#9a8070;min-height:18px;text-align:center}
 .q-badge{display:none;background:#995C44;color:#fff;border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;margin-top:8px}
 .upload-hint{font-size:10px;color:#9a8070;letter-spacing:.15em;text-transform:uppercase;margin-top:6px;cursor:pointer}
-
-/* ── Tracker ── */
 .trk-screen{display:none;flex-direction:column;min-height:100vh;background:var(--bg)}
 .hdr{padding:18px 24px;background:var(--pl);border-bottom:3px solid var(--pb)}
 .hdr-top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
@@ -132,7 +126,6 @@ table{width:100%;border-collapse:collapse;background:#fff}
 </head>
 <body>
 
-<!-- PIN Modal -->
 <div class="modal-ov t-hosp" id="pin-modal">
   <div class="modal-box">
     <div class="modal-title" id="pin-title">Confirmar acción</div>
@@ -147,7 +140,6 @@ table{width:100%;border-collapse:collapse;background:#fff}
   </div>
 </div>
 
-<!-- Selector -->
 <div class="sel-screen" id="sel-screen">
   <div class="sel-logo-wrap" id="sel-logo-area">
     <label for="selLogoUpload" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px">
@@ -172,7 +164,6 @@ table{width:100%;border-collapse:collapse;background:#fff}
   <div class="q-badge" id="q-badge"></div>
 </div>
 
-<!-- Tracker -->
 <div class="trk-screen" id="trk-screen">
   <div class="hdr">
     <div class="hdr-top">
@@ -199,14 +190,12 @@ table{width:100%;border-collapse:collapse;background:#fff}
   </div>
   <div class="toast" id="toast"></div>
   <div class="main"><div class="main-inner">
-
-    <!-- Entry -->
     <div id="view-entry">
       <div class="card">
         <div class="sec-title" id="form-title">Nueva Entrada</div>
         <div class="grid-4">
           <div><label class="lbl">FECHA</label><input type="date" class="inp" id="f-date"></div>
-          <div><label class="lbl" id="lbl-server">RESPONSABLE</label><select class="inp" id="f-server"><option value="">Seleccionar…</option></select></div>
+          <div id="server-wrap"><label class="lbl" id="lbl-server">RESPONSABLE</label><select class="inp" id="f-server"><option value="">Seleccionar…</option></select></div>
           <div>
             <label class="lbl" id="lbl-guest">NOMBRE HUÉSPED</label>
             <input  type="text" class="inp" id="f-name" placeholder="Nombre del huésped">
@@ -234,14 +223,10 @@ table{width:100%;border-collapse:collapse;background:#fff}
         </div>
       </div>
     </div>
-
-    <!-- Log -->
     <div id="view-log" style="display:none">
       <div class="filter-row" id="log-filters"></div>
       <div id="log-list"></div>
     </div>
-
-    <!-- Reports -->
     <div id="view-report" style="display:none">
       <div class="filter-row" id="rep-filters"></div>
       <div class="kpi-grid"  id="kpi-grid"></div>
@@ -252,7 +237,6 @@ table{width:100%;border-collapse:collapse;background:#fff}
         <div class="rep-card" id="rep-coin"></div>
       </div>
     </div>
-
   </div></div>
   <div class="footer"><div id="logo-area"></div><div class="footer-sub">Tierramor · Santa Cruz, Guanacaste</div></div>
 </div>
@@ -260,16 +244,18 @@ table{width:100%;border-collapse:collapse;background:#fff}
 <script>
 // ─── Config ────────────────────────────────────────────────────
 const SHEETS_URL = "https://script.google.com/macros/s/AKfycbw09jotEtJM4fDeE8MIThWbRKwJObNiO_JU5oU5crANaYW6knThsXnsJc1z7ZtK5Ey-/exec";
-
-const THEMES  = {hospitality:"t-hosp",fb:"t-fb",farm:"t-farm",casita:"t-casita"};
-const MOD_LBL = {hospitality:"Hospitality",fb:"F&B",farm:"Farm",casita:"Casita Azul"};
+const THEMES    = {hospitality:"t-hosp",fb:"t-fb",farm:"t-farm",casita:"t-casita"};
+const MOD_LBL   = {hospitality:"Hospitality",fb:"F&B",farm:"Farm",casita:"Casita Azul"};
+// Módulos con precios nativos en CRC (sin conversión desde USD)
+const CRC_MODULES = ['casita','farm'];
 
 // ─── Dynamic data (from Sheets) ────────────────────────────────
 let MENUS   = {hospitality:{},fb:{},farm:{},casita:{}};
 let CABYS   = {};
 let SERVERS = {hospitality:[],fb:[],farm:[],casita:[]};
+let ALL_STAFF = [];
 
-// ─── Fallback data (if fetch fails and no cache) ────────────────
+// ─── Fallback data ─────────────────────────────────────────────
 const FB_MENUS = {
   hospitality:{
     "Lodging":[{name:"Dorm Casita",price:250,tax_price:282.50},{name:"Standard Casita",price:500,tax_price:565},{name:"King Suite Casita",price:500,tax_price:565}],
@@ -282,10 +268,10 @@ const FB_MENUS = {
     "Bites and Sweets":[{name:"Pumpkin Pie",price:4.42,tax_price:4.99},{name:"Sourdough Toast",price:5.31,tax_price:6},{name:"Chips and Dip",price:4.42,tax_price:4.99},{name:"Cacao Cookie",price:3.54,tax_price:4},{name:"Bliss Balls",price:3.54,tax_price:4}]
   },
   farm:{
-    "Solid biofertilizer":[{name:"Bocashi (kg)",price:6.19,tax_price:6.99},{name:"Bocashi saco (25 kg)",price:12.39,tax_price:14},{name:"Potting soil mix (40L)",price:10.62,tax_price:12},{name:"Jabón potásico (kg)",price:20.35,tax_price:23},{name:"Harina de hueso (kg)",price:10.62,tax_price:12},{name:"Fosfitos potásicos (kg)",price:12.39,tax_price:14}],
-    "Liquid biofertilizer":[{name:"MM líquido (L)",price:2.65,tax_price:2.99},{name:"Emulsión de pescado (L)",price:14.16,tax_price:16},{name:"Emulsión pescado (gal)",price:35.40,tax_price:40}]
+    "Solid biofertilizer":[{name:"Bocashi (kg)",price:3219,tax_price:3638},{name:"Bocashi saco (25 kg)",price:6443,tax_price:7281},{name:"Potting soil mix (40L)",price:5522,tax_price:6240}],
+    "Liquid biofertilizer":[{name:"MM líquido (L)",price:1379,tax_price:1558},{name:"Emulsión de pescado (L)",price:7364,tax_price:8321}]
   },
-  casita:{"Staff Meal":[{name:"Tiquete",price:442.48,tax_price:500}]}
+  casita:{"Staff Meal":[{name:"1 Tiquete",price:442,tax_price:500}]}
 };
 const FB_SERVERS = {
   hospitality:["Krizia Aguilar","Nicolas Salas"],
@@ -306,34 +292,34 @@ const FB_CABYS = {
   "Dorm Casita":"55130000000000","Standard Casita":"55130000000000","King Suite Casita":"55130000000000",
   "Bocashi (kg)":"31160000000000","Bocashi saco (25 kg)":"31160000000000","Potting soil mix (40L)":"31160000000000",
   "MM líquido (L)":"31160000000000","Emulsión de pescado (L)":"31160000000000","Emulsión pescado (gal)":"31160000000000",
-  "Jabón potásico (kg)":"31160000000000","Harina de hueso (kg)":"31160000000000","Fosfitos potásicos (kg)":"31160000000000",
-  "Tiquete":"56110000000000"
+  "1 Tiquete":"56110000000000"
 };
 
 // ─── App State ─────────────────────────────────────────────────
 const S = {
-  mod:null, editId:null, itemCount:0, items:[],
-  pinCb:null, pendingDelId:null, filterPeriod:"all",
-  rate: Number(localStorage.getItem("tm_rate")||520),
-  entries: {}
+  mod:null,editId:null,itemCount:0,items:[],
+  pinCb:null,pendingDelId:null,filterPeriod:"all",
+  rate:Number(localStorage.getItem("tm_rate")||520),
+  entries:{}
 };
 ["hospitality","fb","farm","casita"].forEach(m=>{
-  S.entries[m] = JSON.parse(localStorage.getItem("tm_entries_"+m)||"[]");
+  S.entries[m]=JSON.parse(localStorage.getItem("tm_entries_"+m)||"[]");
 });
 
 // ─── Helpers ────────────────────────────────────────────────────
-const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-const saveE  = ()  => localStorage.setItem("tm_entries_"+S.mod, JSON.stringify(S.entries[S.mod]));
-const getE   = ()  => S.entries[S.mod]||[];
-const today  = ()  => new Date().toISOString().slice(0,10);
-const uid    = ()  => (crypto.randomUUID ? crypto.randomUUID() : Date.now()+Math.random());
+const esc = s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+const saveE  = ()=>localStorage.setItem("tm_entries_"+S.mod,JSON.stringify(S.entries[S.mod]));
+const getE   = ()=>S.entries[S.mod]||[];
+const today  = ()=>new Date().toISOString().slice(0,10);
+const uid    = ()=>(crypto.randomUUID?crypto.randomUUID():Date.now()+Math.random());
+const isCrcMod = ()=>CRC_MODULES.includes(S.mod);
 function fmt(v,coin){
   v=Number(v)||0;
-  return coin==="USD" ? "$"+v.toFixed(2) : "₡"+v.toLocaleString("es-CR",{minimumFractionDigits:2,maximumFractionDigits:2});
+  return coin==="USD"?"$"+v.toFixed(2):"₡"+v.toLocaleString("es-CR",{minimumFractionDigits:2,maximumFractionDigits:2});
 }
-const toUSD  = (p,coin) => coin==="USD" ? Number(p) : Number(p)/S.rate;
+const toUSD=(p,coin)=>coin==="USD"?Number(p):Number(p)/S.rate;
 function showToast(msg,dur=2500){const t=document.getElementById("toast");t.textContent=msg;t.style.display="block";setTimeout(()=>t.style.display="none",dur);}
-const getCabys = n => CABYS[n]||"";
+const getCabys=n=>CABYS[n]||"";
 function renderCabys(n){
   if(!n) return '<span class="cabys-badge cabys-pend">CABYS —</span>';
   const c=getCabys(n);
@@ -341,20 +327,25 @@ function renderCabys(n){
 }
 function getName(){
   return S.mod==="casita"
-    ? document.getElementById("f-name-sel").value
-    : document.getElementById("f-name").value.trim();
+    ?document.getElementById("f-name-sel").value
+    :document.getElementById("f-name").value.trim();
 }
 function toggleRef(){
   const dev=document.getElementById("f-device").value;
   document.getElementById("ref-wrap").style.display=(dev==="Card"||dev==="Sinpe Móvil")?"block":"none";
   document.getElementById("f-ref").placeholder=dev==="Card"?"Ref / últimos 4 dígitos":"Ref Sinpe Móvil";
 }
+// Convierte precio del catálogo a la moneda seleccionada
+function convertCatalogPrice(price,coin){
+  if(isCrcMod()) return coin==="CRC"?price:Math.round(price/S.rate*100)/100;
+  return coin==="CRC"?Math.round(price*S.rate):price;
+}
 
 // ─── Pricing ────────────────────────────────────────────────────
-const manualTax = net => Math.round(net*1.13*100)/100;
+const manualTax=net=>Math.round(net*1.13*100)/100;
 function lineTotal(it){
   const qty=Number(it.qty)||1;
-  const tp = it.tax_price>0 ? it.tax_price : manualTax(Number(it.unitPrice)||0);
+  const tp=it.tax_price>0?it.tax_price:manualTax(Number(it.unitPrice)||0);
   return Math.round(tp*qty*100)/100;
 }
 function lineNet(it){
@@ -367,18 +358,20 @@ async function loadCatalog(){
   el.textContent="Cargando catálogo…";
   const cached=localStorage.getItem("tm_catalog");
   const cachedAt=Number(localStorage.getItem("tm_catalog_ts")||0);
-  if(cached && Date.now()-cachedAt<3600000){
-    const d=JSON.parse(cached); buildFromCatalog(d.catalog,d.servers);
-    enableBtns(); el.textContent="✓ Catálogo listo"; return;
+  if(cached&&Date.now()-cachedAt<3600000){
+    const d=JSON.parse(cached);buildFromCatalog(d.catalog,d.servers);
+    enableBtns();el.textContent="✓ Catálogo listo";return;
   }
   try{
     const res=await fetch(SHEETS_URL);
     const data=await res.json();
     if(data.status!=="ok") throw new Error(data.message);
-    localStorage.setItem("tm_catalog",JSON.stringify({catalog:data.catalog,servers:data.servers}));
-    localStorage.setItem("tm_catalog_ts",Date.now());
+    try{
+      localStorage.setItem("tm_catalog",JSON.stringify({catalog:data.catalog,servers:data.servers}));
+      localStorage.setItem("tm_catalog_ts",Date.now());
+    }catch(e){}
     buildFromCatalog(data.catalog,data.servers);
-    enableBtns(); el.textContent="✓ Catálogo actualizado";
+    enableBtns();el.textContent="✓ Catálogo actualizado";
   }catch{
     if(cached){const d=JSON.parse(cached);buildFromCatalog(d.catalog,d.servers);el.textContent="⚠ Usando caché local";}
     else{useFallback();el.textContent="⚠ Modo sin conexión";}
@@ -393,10 +386,10 @@ function buildFromCatalog(catalog,servers){
     MENUS[it.module][it.category].push({name:it.name,price:it.net_price,tax_price:it.tax_price});
     if(it.cabys) CABYS[it.name]=it.cabys;
   });
-  if(servers) Object.keys(SERVERS).forEach(k=>{if(servers[k]) SERVERS[k]=servers[k];});
-  // Build full staff list for Casita name dropdown
-  const all=[...new Set(Object.values(servers||{}).flat())].sort();
-  if(all.length) localStorage.setItem("tm_staff_list",JSON.stringify(all));
+  if(servers){
+    Object.keys(SERVERS).forEach(k=>{if(servers[k]) SERVERS[k]=servers[k];});
+    if(servers.all_staff&&servers.all_staff.length) ALL_STAFF=servers.all_staff;
+  }
 }
 function useFallback(){
   MENUS=JSON.parse(JSON.stringify(FB_MENUS));
@@ -415,7 +408,7 @@ async function flushQueue(){
   for(const e of q){
     try{
       const res=await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify(e)})});
-      const d=await res.json(); if(d.status!=="ok") rem.push(e);
+      const d=await res.json();if(d.status!=="ok") rem.push(e);
     }catch{rem.push(e);}
   }
   localStorage.setItem("tm_queue",JSON.stringify(rem));
@@ -436,8 +429,8 @@ async function sendToSheets(entry){
     else throw new Error(d.message);
   }catch{
     const q=JSON.parse(localStorage.getItem("tm_queue")||"[]");
-    q.push(entry); localStorage.setItem("tm_queue",JSON.stringify(q));
-    updateQBadge(); showToast("Sin conexión — se enviará automáticamente ⏳",3500);
+    q.push(entry);localStorage.setItem("tm_queue",JSON.stringify(q));
+    updateQBadge();showToast("Sin conexión — se enviará automáticamente ⏳",3500);
   }
 }
 
@@ -456,14 +449,14 @@ async function confirmPin(){
   const pin=document.getElementById("pin-code").value;
   const err=document.getElementById("pin-err");
   const load=document.getElementById("pin-load");
-  err.style.display="none"; load.style.display="block";
+  err.style.display="none";load.style.display="block";
   document.getElementById("pin-ok").disabled=true;
   try{
     const res=await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({action:"validatePin",pin})})});
     const d=await res.json();
     if(d.valid){
       document.getElementById("pin-modal").classList.remove("open");
-      if(S.pinCb) S.pinCb(); S.pinCb=null;
+      if(S.pinCb) S.pinCb();S.pinCb=null;
     }else{
       err.textContent="PIN incorrecto. Intenta de nuevo.";
       err.style.display="block";
@@ -481,13 +474,13 @@ async function confirmPin(){
 
 // ─── Theme ──────────────────────────────────────────────────────
 function applyTheme(m){
-  document.getElementById("trk-screen").className ="trk-screen "+(THEMES[m]||"");
-  document.getElementById("pin-modal").className  ="modal-ov "+(THEMES[m]||"");
+  document.getElementById("trk-screen").className="trk-screen "+(THEMES[m]||"");
+  document.getElementById("pin-modal").className="modal-ov "+(THEMES[m]||"");
 }
 
 // ─── Module navigation ──────────────────────────────────────────
 function enterModule(m){
-  S.mod=m; applyTheme(m);
+  S.mod=m;applyTheme(m);
   document.getElementById("sel-screen").style.display="none";
   document.getElementById("trk-screen").style.display="flex";
   document.getElementById("mod-sub").textContent=MOD_LBL[m]+" Revenue Tracker";
@@ -495,38 +488,35 @@ function enterModule(m){
   document.getElementById("rate-inp").value=S.rate;
   document.getElementById("rate-disp").textContent=S.rate;
   document.getElementById("lbl-server").textContent=(m==="fb"||m==="casita")?"ATENDIDO POR":"RESPONSABLE";
-  document.getElementById("lbl-guest").textContent=m==="farm"?"NOMBRE CLIENTE":m==="casita"?"NOMBRE STAFF":"NOMBRE HUÉSPED";
-  const nameInp=document.getElementById("f-name");
-  const nameSel=document.getElementById("f-name-sel");
-  if(m==="casita"){
-    const staffList=JSON.parse(localStorage.getItem("tm_staff_list")||"[]");
-    nameInp.style.display="none"; nameInp.value="";
-    nameSel.style.display="block";
-    nameSel.innerHTML='<option value="">Seleccionar…</option>'+staffList.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
-  }else{
-    nameInp.style.display="block"; nameInp.placeholder=m==="farm"?"Nombre del cliente":"Nombre del huésped";
-    nameSel.style.display="none"; nameSel.value="";
-  }
+  document.getElementById("lbl-guest").textContent=m==="farm"?"NOMBRE CLIENTE":m==="casita"?"COLABORADOR":"NOMBRE HUÉSPED";
+
+  // Server dropdown
   const sel=document.getElementById("f-server");
   const srvList=SERVERS[m]||[];
   sel.innerHTML='<option value="">Seleccionar…</option>'+srvList.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
-  const serverWrap=sel.closest("div");
-  if(srvList.length===1){
-    sel.value=srvList[0];
+  const serverWrap=document.getElementById("server-wrap");
+  if(srvList.length<=1){
+    if(srvList.length===1) sel.value=srvList[0];
     if(serverWrap) serverWrap.style.display="none";
-  } else {
+  }else{
     if(serverWrap) serverWrap.style.display="";
   }
+
+  // Name / collaborator field
+  const nameInp=document.getElementById("f-name");
+  const nameSel=document.getElementById("f-name-sel");
   if(m==="casita"){
-    nameInp.style.display="none"; nameInp.value="";
+    nameInp.style.display="none";nameInp.value="";
     nameSel.style.display="block";
-    nameSel.innerHTML='<option value="">Seleccionar…</option>'+(SERVERS.casita||[]).map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
-  } else {
-    nameInp.style.display="block"; nameInp.placeholder=m==="farm"?"Nombre del cliente":"Nombre del huésped";
-    nameSel.style.display="none"; nameSel.value="";
+    const list=ALL_STAFF.length?ALL_STAFF:Object.values(SERVERS).flat().filter((v,i,a)=>a.indexOf(v)===i).sort();
+    nameSel.innerHTML='<option value="">Seleccionar…</option>'+list.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  }else{
+    nameInp.style.display="block";nameInp.placeholder=m==="farm"?"Nombre del cliente":"Nombre del huésped";
+    nameSel.style.display="none";nameSel.value="";
   }
-  document.getElementById("f-date").value=today();
-  document.getElementById("f-coin").value=m==="casita"?"CRC":"USD";
+
+  // Coin default: CRC for farm & casita, USD for the rest
+  document.getElementById("f-coin").value=CRC_MODULES.includes(m)?"CRC":"USD";
   document.getElementById("f-device").value="Cash";
   document.getElementById("f-ref").value="";
   document.getElementById("ref-wrap").style.display="none";
@@ -535,8 +525,8 @@ function enterModule(m){
   document.getElementById("ord-summary").style.display="none";
   document.getElementById("form-title").textContent="Nueva Entrada";
   document.getElementById("cancel-btn").style.display="none";
-  S.items=[]; S.itemCount=0; S.editId=null;
-  addItem(); S.filterPeriod="all";
+  S.items=[];S.itemCount=0;S.editId=null;
+  addItem();S.filterPeriod="all";
   switchView("entry",document.getElementById("nav-entry"));
   buildFilters("log-filters","log");
   buildFilters("rep-filters","report");
@@ -560,9 +550,10 @@ function switchView(v,btn){
 
 // ─── Menu dropdown ──────────────────────────────────────────────
 function buildMenuHTML(){
+  const crc=isCrcMod();
   return Object.entries(MENUS[S.mod]||{}).map(([cat,its])=>
     `<div class="drop-cat">${esc(cat)}</div>`+
-    its.map(i=>`<div class="drop-item" data-name="${esc(i.name)}" data-price="${i.price}" data-tax="${i.tax_price}" data-cat="${esc(cat)}">${esc(i.name)}${i.price>0?`<span style="font-weight:700;font-size:12px;opacity:.75"> ${i.price.toFixed(2)}</span>`:''}</div>`).join("")
+    its.map(i=>`<div class="drop-item" data-name="${esc(i.name)}" data-price="${i.price}" data-tax="${i.tax_price}" data-cat="${esc(cat)}">${esc(i.name)}${i.price>0?`<span style="font-weight:700;font-size:12px;opacity:.75"> ${crc?'₡'+Math.round(i.price).toLocaleString('es-CR'):'$'+i.price.toFixed(2)}</span>`:''}</div>`).join("")
   ).join("");
 }
 
@@ -572,7 +563,7 @@ function addItem(){
   S.items.push({id,product:"",category:"",unitPrice:0,tax_price:0,qty:1});
   const wrap=document.getElementById("items-cont");
   const div=document.createElement("div");
-  div.className="item-box"; div.id="item-"+id;
+  div.className="item-box";div.id="item-"+id;
   div.innerHTML=`
     <div class="item-hdr"><span class="item-lbl">ÍTEM ${S.items.length}</span><button class="rm-btn">✕</button></div>
     <div class="item-grid">
@@ -606,17 +597,17 @@ function addItem(){
 }
 function selectProduct(el,id){
   const name=el.dataset.name,price=Number(el.dataset.price),taxP=Number(el.dataset.tax),cat=el.dataset.cat;
-  const it=S.items.find(i=>i.id===id); if(!it) return;
+  const it=S.items.find(i=>i.id===id);if(!it) return;
   const coin=document.getElementById("f-coin").value;
-  const unitP = coin==="CRC" ? Math.round(price*S.rate) : price;
-  const taxPrc= coin==="CRC" ? Math.round(taxP*S.rate)  : taxP;
-  it.product=name; it.category=cat; it.unitPrice=unitP; it.tax_price=taxPrc;
+  it.product=name;it.category=cat;
+  it.unitPrice=convertCatalogPrice(price,coin);
+  it.tax_price=convertCatalogPrice(taxP,coin);
   it.qty=Number(document.getElementById("qty-"+id)?.value)||1;
   document.getElementById("trig-txt-"+id).textContent=name;
   document.getElementById("trig-"+id).classList.remove("empty");
   document.getElementById("cat-"+id).textContent=cat;
   const pel=document.getElementById("price-"+id);
-  pel.value=unitP; pel.readOnly=true; pel.style.opacity="0.6"; pel.style.cursor="not-allowed";
+  pel.value=it.unitPrice;pel.readOnly=true;pel.style.opacity="0.6";pel.style.cursor="not-allowed";
   document.getElementById("cabys-"+id).innerHTML=renderCabys(name);
   document.getElementById("drop-"+id).classList.remove("open");
   updateSummary();
@@ -648,7 +639,7 @@ function removeItem(id){
   if(S.items.length<=1) return;
   S.items=S.items.filter(i=>i.id!==id);
   document.getElementById("item-"+id).remove();
-  updateRmBtns(); renumberItems(); updateSummary();
+  updateRmBtns();renumberItems();updateSummary();
 }
 function updateRmBtns(){document.querySelectorAll(".rm-btn").forEach(b=>b.style.display=S.items.length>1?"inline":"none");}
 function renumberItems(){S.items.forEach((it,idx)=>{const l=document.querySelector("#item-"+it.id+" .item-lbl");if(l) l.textContent="ÍTEM "+(idx+1);});}
@@ -656,7 +647,8 @@ function renumberItems(){S.items.forEach((it,idx)=>{const l=document.querySelect
 // ─── Save / Reset ───────────────────────────────────────────────
 function saveEntry(){
   const server=document.getElementById("f-server").value;
-  if(!server){showToast("Selecciona quién atiende la orden.");return;}
+  const srvList=SERVERS[S.mod]||[];
+  if(!server&&srvList.length>1){showToast("Selecciona quién atiende la orden.");return;}
   const name=getName();
   if(!name){showToast("El nombre es requerido.");return;}
   const valid=S.items.filter(i=>i.product&&(Number(i.unitPrice)>0||Number(i.tax_price)>0));
@@ -671,15 +663,15 @@ function saveEntry(){
   const orderNet  =eItems.reduce((s,i)=>Math.round((s+i.price)*100)/100,0);
   const orderTotal=eItems.reduce((s,i)=>Math.round((s+i.total)*100)/100,0);
   const entry={
-    id:S.editId||uid(), module:S.mod,
+    id:S.editId||uid(),module:S.mod,
     date:document.getElementById("f-date").value,
-    server,name,coin,
+    server:server||(srvList[0]||""),name,coin,
     device:document.getElementById("f-device").value,
     ref:document.getElementById("f-ref").value,
     event:document.getElementById("f-event").value.trim(),
-    items:eItems, orderNet,
+    items:eItems,orderNet,
     orderTax:Math.round((orderTotal-orderNet)*100)/100,
-    orderTotal, rateAtTime:S.rate
+    orderTotal,rateAtTime:S.rate
   };
   if(S.editId){
     S.entries[S.mod]=S.entries[S.mod].map(e=>e.id===S.editId?entry:e);
@@ -691,31 +683,30 @@ function saveEntry(){
     S.entries[S.mod]=[entry,...S.entries[S.mod]];
     sendToSheets(entry);
   }
-  saveE(); resetForm();
+  saveE();resetForm();
 }
 function resetForm(){
   document.getElementById("f-server").value="";
   document.getElementById("f-date").value=today();
   document.getElementById("f-name").value="";
   document.getElementById("f-name-sel").value="";
-  document.getElementById("f-coin").value=S.mod==="casita"?"CRC":"USD";
+  document.getElementById("f-coin").value=CRC_MODULES.includes(S.mod)?"CRC":"USD";
   document.getElementById("f-device").value="Cash";
   document.getElementById("f-ref").value="";
   document.getElementById("ref-wrap").style.display="none";
   document.getElementById("items-cont").innerHTML="";
   document.getElementById("ord-summary").style.display="none";
-  S.items=[]; S.itemCount=0;
-  if(S.mod&&(SERVERS[S.mod]||[]).length===1) document.getElementById("f-server").value=SERVERS[S.mod][0];
+  S.items=[];S.itemCount=0;
+  const srvList=SERVERS[S.mod]||[];
+  if(srvList.length===1) document.getElementById("f-server").value=srvList[0];
   addItem();
 }
 function cancelEdit(){S.editId=null;document.getElementById("form-title").textContent="Nueva Entrada";document.getElementById("cancel-btn").style.display="none";resetForm();}
 
 // ─── Edit / Delete ──────────────────────────────────────────────
-function startEdit(id){
-  requestPin("Editar entrada","Ingresa el PIN para modificar esta entrada.",()=>doEdit(id));
-}
+function startEdit(id){requestPin("Editar entrada","Ingresa el PIN para modificar esta entrada.",()=>doEdit(id));}
 function doEdit(id){
-  const e=getE().find(x=>x.id==id); if(!e) return;
+  const e=getE().find(x=>x.id==id);if(!e) return;
   S.editId=e.id;
   document.getElementById("form-title").textContent="Editar Entrada";
   document.getElementById("cancel-btn").style.display="inline-block";
@@ -729,18 +720,18 @@ function doEdit(id){
   document.getElementById("f-ref").value=e.ref||"";
   document.getElementById("f-event").value=e.event||"";
   document.getElementById("items-cont").innerHTML="";
-  S.items=[]; S.itemCount=0;
+  S.items=[];S.itemCount=0;
   e.items.forEach(i=>{
     addItem();
     const last=S.items[S.items.length-1];
-    last.product=i.product; last.category=i.category;
-    last.unitPrice=i.price; last.tax_price=i.total; last.qty=i.qty||1;
+    last.product=i.product;last.category=i.category;
+    last.unitPrice=i.price;last.tax_price=i.total;last.qty=i.qty||1;
     document.getElementById("trig-txt-"+last.id).textContent=i.product;
     document.getElementById("trig-"+last.id).classList.remove("empty");
     document.getElementById("cat-"+last.id).textContent=i.category;
     const pel=document.getElementById("price-"+last.id);
-    pel.value=i.price; pel.readOnly=true; pel.style.opacity="0.6"; pel.style.cursor="not-allowed";
-    const qel=document.getElementById("qty-"+last.id); if(qel) qel.value=i.qty||1;
+    pel.value=i.price;pel.readOnly=true;pel.style.opacity="0.6";pel.style.cursor="not-allowed";
+    const qel=document.getElementById("qty-"+last.id);if(qel) qel.value=i.qty||1;
     document.getElementById("cabys-"+last.id).innerHTML=renderCabys(i.product);
   });
   updateSummary();
@@ -751,16 +742,16 @@ function deleteEntry(id){
   S.pendingDelId=id;
   requestPin("Eliminar entrada","Ingresa el PIN para confirmar la eliminación.",()=>{
     S.entries[S.mod]=S.entries[S.mod].filter(e=>e.id!=S.pendingDelId);
-    saveE(); S.pendingDelId=null; renderLog(); showToast("Entrada eliminada");
+    saveE();S.pendingDelId=null;renderLog();showToast("Entrada eliminada");
   });
 }
 
 // ─── Filters ────────────────────────────────────────────────────
 function buildFilters(cid,vn){
-  const c=document.getElementById(cid); c.innerHTML="";
+  const c=document.getElementById(cid);c.innerHTML="";
   [["all","Todos"],["today","Hoy"],["week","Últimos 7 días"],["month","Este mes"]].forEach(([p,l])=>{
     const b=document.createElement("button");
-    b.className="filter-btn"+(p==="all"?" active":""); b.textContent=l;
+    b.className="filter-btn"+(p==="all"?" active":"");b.textContent=l;
     b.addEventListener("click",()=>{
       S.filterPeriod=p;
       document.querySelectorAll("#"+cid+" .filter-btn").forEach(x=>x.classList.remove("active"));
@@ -836,26 +827,22 @@ function renderReport(){
   const netRev=f.reduce((s,e)=>s+toUSD(e.orderNet,  e.coin),0);
   document.getElementById("kpi-grid").innerHTML=[
     {l:"Revenue Total (c/IVA)",v:"$"+totRev.toFixed(2),s:"₡"+(totRev*S.rate).toLocaleString("es-CR")},
-    {l:"Revenue Neto (s/IVA)",  v:"$"+netRev.toFixed(2),s:"₡"+(netRev*S.rate).toLocaleString("es-CR")},
-    {l:"Órdenes",               v:f.length},
-    {l:"Promedio / Orden",      v:f.length?"$"+(totRev/f.length).toFixed(2):"—"}
+    {l:"Revenue Neto (s/IVA)", v:"$"+netRev.toFixed(2),s:"₡"+(netRev*S.rate).toLocaleString("es-CR")},
+    {l:"Órdenes",              v:f.length},
+    {l:"Promedio / Orden",     v:f.length?"$"+(totRev/f.length).toFixed(2):"—"}
   ].map(k=>`<div class="kpi-card"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div>${k.s?`<div class="kpi-sub">${k.s}</div>`:""}</div>`).join("");
-
   const srvs=(SERVERS[S.mod]||[]).map(s=>({name:s,total:f.filter(e=>e.server===s).reduce((sum,e)=>sum+toUSD(e.orderTotal,e.coin),0),count:f.filter(e=>e.server===s).length})).filter(s=>s.count>0);
   const maxS=Math.max(...srvs.map(s=>s.total),1);
   document.getElementById("rep-server").innerHTML=`<div class="rep-title">Revenue por Servidor</div>`+
     (srvs.length?srvs.map(s=>`<div class="bar-row"><div class="bar-meta"><span style="font-weight:700">${esc(s.name)} <span style="opacity:.5;font-size:12px">(${s.count})</span></span><span style="font-weight:800">$${s.total.toFixed(2)}</span></div><div class="bar-track"><div class="bar-fill" style="width:${(s.total/maxS)*100}%"></div></div></div>`).join(""):'<div style="color:#ccc;font-size:13px">Sin datos</div>');
-
   const cats=Object.keys(MENUS[S.mod]||{});
   const byCat=cats.map(cat=>{const ci=allItems.filter(i=>i.category===cat);return{name:cat,total:ci.reduce((s,i)=>s+toUSD(i.total,i.coin),0),count:ci.length};}).filter(c=>c.count>0);
   const maxC=Math.max(...byCat.map(c=>c.total),1);
   document.getElementById("rep-cat").innerHTML=`<div class="rep-title">Revenue por Categoría</div>`+
     (byCat.length?byCat.map(c=>`<div class="bar-row"><div class="bar-meta"><span style="font-weight:700">${esc(c.name)} <span style="opacity:.5;font-size:12px">(${c.count})</span></span><span style="font-weight:800">$${c.total.toFixed(2)}</span></div><div class="bar-track"><div class="bar-fill" style="width:${(c.total/maxC)*100}%"></div></div></div>`).join(""):'<div style="color:#ccc;font-size:13px">Sin datos</div>');
-
   const devs=["Cash","Card","Bank Transfer","Sinpe Móvil"].map(d=>({name:d,total:f.filter(e=>e.device===d).reduce((s,e)=>s+toUSD(e.orderTotal,e.coin),0),count:f.filter(e=>e.device===d).length})).filter(d=>d.count>0);
   document.getElementById("rep-device").innerHTML=`<div class="rep-title">Por Método de Pago</div>`+
     (devs.length?devs.map(d=>`<div class="pay-row"><span class="pay-name">${esc(d.name)} (${d.count})</span><span style="font-weight:800">$${d.total.toFixed(2)}</span></div>`).join(""):'<div style="color:#ccc;font-size:13px">Sin datos</div>');
-
   const coins=["USD","CRC"].map(c=>({name:c,total:f.filter(e=>e.coin===c).reduce((s,e)=>s+Number(e.orderTotal),0),count:f.filter(e=>e.coin===c).length})).filter(c=>c.count>0);
   document.getElementById("rep-coin").innerHTML=`<div class="rep-title">Por Moneda</div>`+
     (coins.length?coins.map(c=>`<div class="pay-row"><span class="pay-name">${c.name} (${c.count})</span><span style="font-weight:800">${fmt(c.total,c.name)}</span></div>`).join(""):'<div style="color:#ccc;font-size:13px">Sin datos</div>');
@@ -884,15 +871,15 @@ document.addEventListener("DOMContentLoaded",async()=>{
   document.getElementById("save-btn"    ).addEventListener("click",saveEntry);
   document.getElementById("cancel-btn"  ).addEventListener("click",cancelEdit);
   document.getElementById("f-device"    ).addEventListener("change",toggleRef);
-  document.getElementById("f-coin"      ).addEventListener("change",()=>{
+  document.getElementById("f-coin").addEventListener("change",()=>{
     const coin=document.getElementById("f-coin").value;
     S.items.forEach(it=>{
       if(!it.product) return;
       const mi=Object.values(MENUS[S.mod]||{}).flat().find(m=>m.name===it.product);
       if(mi){
-        it.unitPrice=coin==="CRC"?Math.round(mi.price*S.rate):mi.price;
-        it.tax_price=coin==="CRC"?Math.round(mi.tax_price*S.rate):mi.tax_price;
-        const pel=document.getElementById("price-"+it.id); if(pel) pel.value=it.unitPrice;
+        it.unitPrice=convertCatalogPrice(mi.price,coin);
+        it.tax_price=convertCatalogPrice(mi.tax_price,coin);
+        const pel=document.getElementById("price-"+it.id);if(pel) pel.value=it.unitPrice;
       }
     });
     updateSummary();
@@ -900,7 +887,7 @@ document.addEventListener("DOMContentLoaded",async()=>{
   document.getElementById("rate-lbl").addEventListener("click",()=>{
     requestPin("Cambiar tipo de cambio","Ingresa el PIN para modificar el tipo de cambio.",()=>{
       const inp=document.getElementById("rate-inp");
-      inp.style.display="inline-block"; inp.focus();
+      inp.style.display="inline-block";inp.focus();
     });
   });
   document.getElementById("rate-inp").addEventListener("input",e=>{
