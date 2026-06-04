@@ -793,7 +793,7 @@ function updateRmBtns(){document.querySelectorAll(".rm-btn").forEach(b=>b.style.
 function renumberItems(){S.items.forEach((it,idx)=>{const l=document.querySelector("#item-"+it.id+" .item-lbl");if(l) l.textContent="ÍTEM "+(idx+1);});}
 
 // ─── Save ───────────────────────────────────────────────────────
-function saveEntry(){
+async function saveEntry(){
   const server=document.getElementById("f-server").value;
   const srvList=SERVERS[S.mod]||[];
   if(!server&&srvList.length>1){showToast("Selecciona quién atiende la orden.");return;}
