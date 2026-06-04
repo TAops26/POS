@@ -495,8 +495,9 @@ function enterModule(m){
   const srvList=SERVERS[m]||[];
   sel.innerHTML='<option value="">Seleccionar…</option>'+srvList.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
   const serverWrap=document.getElementById("server-wrap");
-  if(srvList.length<=1){
-    if(srvList.length===1) sel.value=srvList[0];
+  // Ocultar servidor solo si hay exactamente 1 asignado Y no es Casita
+  if(srvList.length===1 && m!=="casita"){
+    sel.value=srvList[0];
     if(serverWrap) serverWrap.style.display="none";
   }else{
     if(serverWrap) serverWrap.style.display="";
