@@ -1,0 +1,215 @@
+// ============================================================
+//  TIERRAMOR — Apps Script v2
+//  Spreadsheet ID: 15bX0GlMfBvStYrmxotv6LvvrnTIZnBSQU1ja4awkcQU
+// ============================================================
+
+const SS_ID = '15bX0GlMfBvStYrmxotv6LvvrnTIZnBSQU1ja4awkcQU';
+
+const MODULE_TABS = {
+  'F&B'        : 'fb',
+  'FARM'       : 'farm',
+  'HOSPITALITY': 'hospitality',
+  'CASITA AZUL': 'casita'
+};
+
+// ── doPost ───────────────────────────────────────────────────
+// Maneja: guardar entrada | validar PIN
+// ─────────────────────────────────────────────────────────────
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.parameter.payload);
+
+    // Validación de PIN (edit, delete, change rate)
+    if (payload.action === 'validatePin') {
+      return respondJSON(checkPin(payload.pin));
+    }
+
+    // Guardar tiquete en TIQUETE ELECTRONICO
+    if (payload.action === 'saveTiquete') {
+      const ss    = SpreadsheetApp.openById(SS_ID);
+      const sheet = ss.getSheetByName('TIQUETE ELECTRONICO');
+      if (!sheet) {
+        return respondJSON({ status: 'error', message: 'Pestaña "TIQUETE ELECTRONICO" no encontrada en el spreadsheet.' });
+      }
+      sheet.appendRow([
+        payload.fecha, payload.modulo, payload.nombre,
+        payload.subtotal, payload.iva, payload.total,
+        payload.id, payload.device
+      ]);
+      return respondJSON({ status: 'ok' });
+    }
+
+    // Guardar factura en FACTURAS
+    if (payload.action === 'saveFactura') {
+      const ss    = SpreadsheetApp.openById(SS_ID);
+      const sheet = ss.getSheetByName('FACTURAS');
+      sheet.appendRow([
+        payload.date, payload.id, payload.module, payload.nombre,
+        payload.tipo, payload.cedula, payload.correo,
+        payload.actividad, payload.total
+      ]);
+      return respondJSON({ status: 'ok' });
+    }
+
+    // Guardar entrada en ENTRIES
+    const ss    = SpreadsheetApp.openById(SS_ID);
+    const sheet = ss.getSheetByName('ENTRIES');
+
+    payload.items.forEach(item => {
+      sheet.appendRow([
+        payload.date,
+        payload.server,
+        payload.name,
+        payload.coin,
+        payload.device,
+        payload.ref        || '',
+        payload.event      || '',
+        payload.orderNet,
+        payload.orderTax,
+        payload.orderTotal,
+        payload.rateAtTime || '',   // Tipo de cambio al momento del registro
+        item.product,
+        item.category,
+        item.cabys         || '',
+        item.price,                 // Net price por ítem
+        item.tax,
+        item.total,
+        item.qty           || 1     // Cantidad
+      ]);
+    });
+
+    return respondJSON({ status: 'ok' });
+
+  } catch(err) {
+    return respondJSON({ status: 'error', message: err.toString() });
+  }
+}
+
+// ── doGet ────────────────────────────────────────────────────
+// Devuelve catálogo de productos (Inside POS = ✅) + staff por módulo
+// ─────────────────────────────────────────────────────────────
+function doGet(e) {
+  try {
+    const ss      = SpreadsheetApp.openById(SS_ID);
+    const catalog = [];
+
+    Object.entries(MODULE_TABS).forEach(([tabName, moduleKey]) => {
+      const sheet = ss.getSheetByName(tabName);
+      if (!sheet) return;
+
+      const rows = sheet.getDataRange().getValues();
+      if (rows.length < 2) return;
+
+      const h      = rows[0];
+      const iCABYS = h.indexOf('CABYS');
+      const iName  = h.indexOf('Name');
+      const iCat   = h.indexOf('Category');
+      const iNet   = h.indexOf('Net Price');
+      const iTax   = h.indexOf('Tax Price');
+      const iPOS   = h.indexOf('Inside POS');
+
+      rows.slice(1).forEach(row => {
+        const name = String(row[iName] || '').trim();
+        if (!name)      return;
+        if (!row[iPOS]) return;
+
+        const rawNet = Number(row[iNet]) || 0;
+        const rawTax = Number(row[iTax]) || 0;
+        // Round tax_price (formula cells return unrounded floats e.g. 6.9947)
+        const taxPrice = Math.round(rawTax * 100) / 100;
+        // If net_price column unreadable (0), derive it from tax_price ÷ 1.13
+        const netPrice = rawNet > 0
+          ? Math.round(rawNet * 100) / 100
+          : Math.round(rawTax / 1.13 * 100) / 100;
+
+        catalog.push({
+          module   : moduleKey,
+          name     : name,
+          category : String(row[iCat]   || '').trim(),
+          cabys    : String(row[iCABYS] || '').trim(),
+          net_price: netPrice,
+          tax_price: taxPrice
+        });
+      });
+    });
+
+    // Leer staff desde pestaña STAFF
+    const servers = getStaff(ss);
+
+    return respondJSON({ status: 'ok', catalog, servers });
+
+  } catch(err) {
+    return respondJSON({ status: 'error', message: err.toString() });
+  }
+}
+
+// Lee la pestaña STAFF y devuelve objeto { moduleKey: [names], all_staff: [allNames] }
+function getStaff(ss) {
+  const result = { fb: [], farm: [], hospitality: [], casita: [], all_staff: [] };
+
+  try {
+    const sheet = ss.getSheetByName('STAFF');
+    if (!sheet) return result;
+
+    const rows = sheet.getDataRange().getValues();
+    if (rows.length < 2) return result;
+
+    const h = rows[0];
+    const colMap = {};
+    Object.entries(MODULE_TABS).forEach(([tabName, moduleKey]) => {
+      const idx = h.findIndex(c => String(c).toLowerCase().trim() === tabName.toLowerCase().trim());
+      if (idx !== -1) colMap[idx] = moduleKey;
+    });
+
+    rows.slice(1).forEach(row => {
+      const name = String(row[0] || '').trim();
+      if (!name) return;
+
+      // Todos los colaboradores sin importar checkboxes
+      result.all_staff.push(name);
+
+      // Solo los asignados a cada módulo
+      Object.entries(colMap).forEach(([colIdx, moduleKey]) => {
+        if (row[colIdx] === true) result[moduleKey].push(name);
+      });
+    });
+
+    result.all_staff.sort();
+
+  } catch(err) {
+    console.error('getStaff error:', err.toString());
+  }
+
+  return result;
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+
+// Lee el PIN desde la pestaña CONFIG y lo compara
+function checkPin(submitted) {
+  try {
+    const ss    = SpreadsheetApp.openById(SS_ID);
+    const sheet = ss.getSheetByName('CONFIG');
+    const rows  = sheet.getDataRange().getValues();
+    let stored  = null;
+
+    rows.forEach(row => {
+      if (String(row[0]).toLowerCase().trim() === 'pin') {
+        stored = String(row[1]).trim();
+      }
+    });
+
+    const valid = stored !== null && String(submitted).trim() === stored;
+    return { status: 'ok', valid };
+
+  } catch(err) {
+    return { status: 'error', valid: false, message: err.toString() };
+  }
+}
+
+// Respuesta JSON estándar
+function respondJSON(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
