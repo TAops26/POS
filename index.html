@@ -219,6 +219,10 @@ table{width:100%;border-collapse:collapse;background:#fff}
             <div id="ref-wrap" style="display:none"><label class="lbl">REF</label><input type="text" class="inp" id="f-ref" placeholder="Ref / últimos 4 dígitos"></div>
           </div>
         </div>
+        <div style="margin-top:20px;padding-top:20px;border-top:1px solid rgba(0,0,0,.08)">
+          <label class="lbl">COMENTARIOS</label>
+          <textarea class="inp" id="f-comments" rows="2" placeholder="Notas adicionales (opcional)" style="resize:vertical;line-height:1.6;min-height:42px"></textarea>
+        </div>
         <div class="ord-summary" id="ord-summary">
           <div class="sum-col"><div class="sum-lbl">Neto</div><div class="sum-val" id="sum-net"></div></div>
           <div class="sum-col"><div class="sum-lbl">IVA (13%)</div><div class="sum-val" id="sum-tax"></div></div>
@@ -683,6 +687,7 @@ function enterModule(m){
   devSel.innerHTML=getDeviceOptions(m).map(d=>`<option>${esc(d)}</option>`).join("");
   devSel.value="Cash";
   document.getElementById("f-ref").value="";
+  document.getElementById("f-comments").value="";
   document.getElementById("ref-wrap").style.display="none";
   document.getElementById("event-wrap").style.display=m==="fb"?"block":"none";
   document.getElementById("items-cont").innerHTML="";
@@ -846,7 +851,8 @@ async function saveEntry(){
     event:document.getElementById("f-event").value.trim(),
     items:eItems,orderNet,
     orderTax:Math.round((orderTotal-orderNet)*100)/100,
-    orderTotal,rateAtTime:S.rate
+    orderTotal,rateAtTime:S.rate,
+    comments:document.getElementById("f-comments").value.trim()
   };
 
   if(S.editId){
