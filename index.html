@@ -243,7 +243,15 @@ table{width:100%;border-collapse:collapse;background:#fff}
                 <div><label class="lbl">TIPO CÉDULA</label><select class="inp" id="fac-tipo"><option value="Física">Física</option><option value="Jurídica">Jurídica</option></select></div>
                 <div><label class="lbl">CÉDULA</label><input type="text" class="inp" id="fac-cedula" placeholder="Número de cédula"></div>
                 <div><label class="lbl">CORREO</label><input type="email" class="inp" id="fac-correo" placeholder="correo@ejemplo.com"></div>
+                <div><label class="lbl">TELÉFONO</label><input type="tel" class="inp" id="fac-telefono" placeholder="XXXX-XXXX" maxlength="9"></div>
                 <div style="grid-column:1/-1"><label class="lbl">ACTIVIDAD ECONÓMICA</label><input type="number" class="inp" id="fac-actividad" placeholder="Ej: 551001" min="0" step="1"></div>
+                <div style="grid-column:1/-1">
+                  <label class="lbl">TIPO DE COMPRA</label>
+                  <div style="display:flex;gap:10px;margin-top:6px">
+                    <div class="doc-opt active" id="opt-detalle" onclick="selectTipoCompra('detalle')">Al detalle</div>
+                    <div class="doc-opt"        id="opt-mayoreo" onclick="selectTipoCompra('mayoreo')">Al por mayor</div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -407,6 +415,13 @@ function selectDocType(type){
 function getDocType(){
   return document.getElementById("opt-factura").classList.contains("active")?"factura":"tiquete";
 }
+let _tipoCompra="detalle";
+function selectTipoCompra(tipo){
+  _tipoCompra=tipo;
+  document.getElementById("opt-detalle").classList.toggle("active",tipo==="detalle");
+  document.getElementById("opt-mayoreo").classList.toggle("active",tipo==="mayoreo");
+}
+function getTipoCompra(){ return _tipoCompra==="mayoreo"?"Al por mayor":"Al detalle"; }
 
 // ─── PDF Tiquete ────────────────────────────────────────────────
 function generateTiquetePDF(entry,tiqNum){
@@ -872,7 +887,25 @@ async function saveEntry(){
       sendTiquete({fecha:entry.date,modulo:MOD_LBL[S.mod],nombre:entry.name,subtotal:entry.orderNet,iva:entry.orderTax,total:entry.orderTotal,id:entry.id,device:entry.device});
       // Si es factura, guardar también en FACTURAS
       if(docType==="factura"){
-        sendFactura({date:entry.date,id:entry.id,module:MOD_LBL[S.mod],nombre:document.getElementById("fac-nombre").value.trim(),tipo:document.getElementById("fac-tipo").value,cedula:document.getElementById("fac-cedula").value.trim(),correo:document.getElementById("fac-correo").value.trim(),actividad:document.getElementById("fac-actividad").value.trim(),total:entry.orderTotal});
+        const catTotals={};
+        eItems.forEach(i=>{
+          if(!catTotals[i.category]) catTotals[i.category]={net:0,total:0};
+          catTotals[i.category].net  =Math.round((catTotals[i.category].net  +i.price)*100)/100;
+          catTotals[i.category].total=Math.round((catTotals[i.category].total+i.total)*100)/100;
+        });
+        const categoryRows=Object.entries(catTotals).map(([cat,v])=>({category:cat,net:v.net,total:v.total}));
+        sendFactura({
+          date:entry.date,id:entry.id,module:MOD_LBL[S.mod],coin:entry.coin,
+          nombre:document.getElementById("fac-nombre").value.trim(),
+          tipo:document.getElementById("fac-tipo").value,
+          cedula:document.getElementById("fac-cedula").value.trim(),
+          correo:document.getElementById("fac-correo").value.trim(),
+          telefono:document.getElementById("fac-telefono").value.trim(),
+          actividad:document.getElementById("fac-actividad").value.trim(),
+          tipo_compra:getTipoCompra(),
+          orderNet:entry.orderNet,orderTotal:entry.orderTotal,
+          categoryRows
+        });
       }
       // Generar PDF del tiquete siempre
       generateTiquetePDF(entry,tiqNum);
@@ -897,8 +930,10 @@ function resetForm(){
     document.getElementById("fac-nombre").value="";
     document.getElementById("fac-cedula").value="";
     document.getElementById("fac-correo").value="";
+    document.getElementById("fac-telefono").value="";
     document.getElementById("fac-actividad").value="";
     document.getElementById("fac-tipo").value="Física";
+    selectTipoCompra("detalle");
   }
   S.items=[];S.itemCount=0;
   const srvList=SERVERS[S.mod]||[];
