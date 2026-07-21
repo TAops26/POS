@@ -193,6 +193,7 @@ table{width:100%;border-collapse:collapse;background:#fff}
       <button class="nav-btn active" id="nav-entry">➕ Nueva Entrada</button>
       <button class="nav-btn"        id="nav-log">Log</button>
       <button class="nav-btn"        id="nav-report">Reportes</button>
+      <button class="nav-btn"        id="nav-consumo" style="display:none">📷 Cobrar Comida</button>
     </div>
   </div>
   <div class="toast" id="toast"></div>
@@ -277,10 +278,43 @@ table{width:100%;border-collapse:collapse;background:#fff}
         <div class="rep-card" id="rep-coin"></div>
       </div>
     </div>
+    <div id="view-consumo" style="display:none">
+      <div class="card">
+        <div class="sec-title">Cobrar Comida — Escanear QR</div>
+        <div id="consumo-scan-wrap">
+          <video id="consumo-video" style="width:100%;max-width:420px;border-radius:12px;display:block;margin:0 auto" playsinline></video>
+          <canvas id="consumo-canvas" style="display:none"></canvas>
+          <div id="consumo-scan-status" style="text-align:center;margin-top:12px;color:var(--pm);font-size:13px">Solicitando acceso a la cámara…</div>
+          <div style="text-align:center;margin-top:16px">
+            <button class="cancel-btn" id="consumo-manual-btn" style="margin-left:0">No se puede escanear — buscar manualmente</button>
+          </div>
+        </div>
+        <div id="consumo-manual-wrap" style="display:none;margin-top:16px">
+          <label class="lbl">COLABORADOR</label>
+          <select class="inp" id="consumo-manual-sel"><option value="">Seleccionar…</option></select>
+          <div style="text-align:center;margin-top:12px">
+            <button class="save-btn" id="consumo-manual-confirm-btn" style="margin-top:0">Buscar</button>
+            <button class="cancel-btn" id="consumo-manual-cancel-btn" style="margin-top:0">Volver a escanear</button>
+          </div>
+        </div>
+        <div id="consumo-confirm-wrap" style="display:none;margin-top:20px">
+          <div class="item-box">
+            <div style="font-size:18px;font-weight:700;color:var(--pr)" id="consumo-confirm-name"></div>
+            <div style="font-size:14px;margin-top:6px" id="consumo-confirm-balance"></div>
+            <div id="consumo-confirm-warning" style="display:none;color:#991b1b;font-weight:700;margin-top:10px">⚠ Saldo insuficiente — no se puede cobrar.</div>
+          </div>
+          <div style="text-align:center;margin-top:16px">
+            <button class="save-btn" id="consumo-confirm-btn" style="margin-top:0">Confirmar Cobro</button>
+            <button class="cancel-btn" id="consumo-confirm-cancel-btn" style="margin-top:0">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div></div>
   <div class="footer"><div id="logo-area"></div><div class="footer-sub">Tierramor · Santa Cruz, Guanacaste</div></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
 // ─── Config ────────────────────────────────────────────────────
 const SHEETS_URL = "https://script.google.com/macros/s/AKfycbw09jotEtJM4fDeE8MIThWbRKwJObNiO_JU5oU5crANaYW6knThsXnsJc1z7ZtK5Ey-/exec";
@@ -302,6 +336,7 @@ let MENUS    = {hospitality:{},fb:{},farm:{},casita:{}};
 let CABYS    = {};
 let SERVERS  = {hospitality:[],fb:[],farm:[],casita:[]};
 let ALL_STAFF = [];
+let CASITA_STAFF = []; // {id,name,balance} — Casita Azul Recarga dropdown + Consumo QR/manual lookup
 
 // ─── Fallback data ─────────────────────────────────────────────
 const FB_MENUS = {
@@ -388,10 +423,14 @@ function renderCabys(n){
   const c=getCabys(n);
   return c?`<span class="cabys-badge">🏛 ${esc(c)}</span>`:'<span class="cabys-badge cabys-pend">CABYS pendiente</span>';
 }
+function getCasitaId(){return document.getElementById("f-name-sel").value;}
 function getName(){
-  return S.mod==="casita"
-    ?document.getElementById("f-name-sel").value
-    :document.getElementById("f-name").value.trim();
+  if(S.mod==="casita"){
+    const sel=document.getElementById("f-name-sel");
+    const opt=sel.options[sel.selectedIndex];
+    return opt?(opt.dataset.name||opt.textContent):"";
+  }
+  return document.getElementById("f-name").value.trim();
 }
 function toggleRef(){
   const dev=document.getElementById("f-device").value;
@@ -549,6 +588,7 @@ function buildFromCatalog(catalog,servers){
   if(servers){
     Object.keys(SERVERS).forEach(k=>{if(servers[k]) SERVERS[k]=servers[k];});
     if(servers.all_staff&&servers.all_staff.length) ALL_STAFF=servers.all_staff;
+    if(servers.casita_staff&&servers.casita_staff.length) CASITA_STAFF=servers.casita_staff;
   }
 }
 function useFallback(){
@@ -622,6 +662,33 @@ async function sendFactura(data){
     await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({action:"saveFactura",...data})})});
   }catch{}
 }
+async function sendRecargaCasita(data){
+  try{
+    const res=await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({action:"recargaCasita",...data})})});
+    const d=await res.json();
+    if(d.status!=="ok") showToast("⚠ Error registrando recarga: "+d.message,5000);
+  }catch{
+    // A diferencia de Consumo (no admite reintento por riesgo de doble cobro), una Recarga
+    // retrasada/reintentada no es crítica: en el peor caso requiere reconciliación manual,
+    // sin riesgo de sobre-cobrar al colaborador.
+    const q=JSON.parse(localStorage.getItem("tm_queue_recarga")||"[]");
+    q.push(data);localStorage.setItem("tm_queue_recarga",JSON.stringify(q));
+    showToast("Sin conexión — recarga pendiente de sincronizar ⏳",3500);
+  }
+}
+async function flushQueueRecarga(){
+  const q=JSON.parse(localStorage.getItem("tm_queue_recarga")||"[]");
+  if(!q.length) return;
+  const rem=[];
+  for(const data of q){
+    try{
+      const res=await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({action:"recargaCasita",...data})})});
+      const d=await res.json();if(d.status!=="ok") rem.push(data);
+    }catch{rem.push(data);}
+  }
+  localStorage.setItem("tm_queue_recarga",JSON.stringify(rem));
+  if(rem.length<q.length) showToast(`${q.length-rem.length} recarga(s) pendiente(s) enviadas ✓`);
+}
 
 // ─── PIN ────────────────────────────────────────────────────────
 function requestPin(title,sub,cb){
@@ -687,11 +754,12 @@ function enterModule(m){
   }else{if(serverWrap) serverWrap.style.display="";}
   const nameInp=document.getElementById("f-name");
   const nameSel=document.getElementById("f-name-sel");
+  document.getElementById("nav-consumo").style.display=m==="casita"?"":"none";
   if(m==="casita"){
     nameInp.style.display="none";nameInp.value="";
     nameSel.style.display="block";
-    const list=ALL_STAFF.length?ALL_STAFF:Object.values(SERVERS).flat().filter((v,i,a)=>a.indexOf(v)===i).sort();
-    nameSel.innerHTML='<option value="">Seleccionar…</option>'+list.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+    const list=CASITA_STAFF.length?CASITA_STAFF.slice().sort((a,b)=>a.name.localeCompare(b.name)):[];
+    nameSel.innerHTML='<option value="">Seleccionar…</option>'+list.map(s=>`<option value="${esc(s.id)}" data-name="${esc(s.name)}">${esc(s.name)}</option>`).join("");
   }else{
     nameInp.style.display="block";nameInp.placeholder=m==="farm"?"Nombre del cliente":"Nombre del huésped";
     nameSel.style.display="none";nameSel.value="";
@@ -722,17 +790,130 @@ function enterModule(m){
 function goBack(){
   const dirty=S.items.some(i=>i.product||Number(i.unitPrice)>0);
   if(dirty&&!confirm("¿Salir sin guardar? Se perderán los datos del formulario.")) return;
+  stopConsumoScan();
   document.getElementById("trk-screen").style.display="none";
   document.getElementById("sel-screen").style.display="flex";
   S.mod=null;
 }
 function switchView(v,btn){
-  ["entry","log","report"].forEach(x=>document.getElementById("view-"+x).style.display="none");
+  ["entry","log","report","consumo"].forEach(x=>document.getElementById("view-"+x).style.display="none");
   document.getElementById("view-"+v).style.display="block";
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.remove("active"));
   btn.classList.add("active");
   if(v==="log")    renderLog();
   if(v==="report") renderReport();
+  if(v==="consumo") startConsumoScan(); else stopConsumoScan();
+}
+
+// ─── Consumo (QR charge) ──────────────────────────────────────
+let consumoStream=null, consumoRAF=null, consumoTarget=null;
+
+async function startConsumoScan(){
+  document.getElementById("consumo-scan-wrap").style.display="block";
+  document.getElementById("consumo-manual-wrap").style.display="none";
+  document.getElementById("consumo-confirm-wrap").style.display="none";
+  const status=document.getElementById("consumo-scan-status");
+  const video=document.getElementById("consumo-video");
+  try{
+    consumoStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+    video.srcObject=consumoStream;
+    await video.play();
+    status.textContent="Apunta la cámara al código QR…";
+    scanFrame();
+  }catch(err){
+    status.textContent="⚠ No se pudo acceder a la cámara. Usa la búsqueda manual.";
+  }
+}
+function stopConsumoScan(){
+  if(consumoRAF){cancelAnimationFrame(consumoRAF);consumoRAF=null;}
+  if(consumoStream){consumoStream.getTracks().forEach(t=>t.stop());consumoStream=null;}
+}
+function scanFrame(){
+  const video=document.getElementById("consumo-video");
+  const canvas=document.getElementById("consumo-canvas");
+  if(video.readyState===video.HAVE_ENOUGH_DATA){
+    canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+    const ctx=canvas.getContext("2d");
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    const img=ctx.getImageData(0,0,canvas.width,canvas.height);
+    const code=jsQR(img.data,img.width,img.height);
+    if(code&&code.data){
+      stopConsumoScan();
+      handleScannedId(code.data.trim());
+      return;
+    }
+  }
+  consumoRAF=requestAnimationFrame(scanFrame);
+}
+function findCasitaStaff(id){
+  return (CASITA_STAFF||[]).find(s=>String(s.id).trim()===String(id).trim());
+}
+function handleScannedId(id){
+  const staff=findCasitaStaff(id);
+  if(!staff){
+    document.getElementById("consumo-scan-status").textContent="⚠ Código no reconocido. Usa la búsqueda manual o vuelve a intentar.";
+    startConsumoScan();
+    return;
+  }
+  showConsumoConfirm(staff);
+}
+function showConsumoConfirm(staff){
+  consumoTarget=staff;
+  document.getElementById("consumo-scan-wrap").style.display="none";
+  document.getElementById("consumo-manual-wrap").style.display="none";
+  document.getElementById("consumo-confirm-wrap").style.display="block";
+  document.getElementById("consumo-confirm-name").textContent=staff.name;
+  document.getElementById("consumo-confirm-balance").textContent="Saldo actual: "+staff.balance+" ticket(s)";
+  const warn=document.getElementById("consumo-confirm-warning");
+  const confirmBtn=document.getElementById("consumo-confirm-btn");
+  if(staff.balance<=0){
+    warn.style.display="block";confirmBtn.disabled=true;confirmBtn.style.opacity=".4";confirmBtn.style.cursor="not-allowed";
+  }else{
+    warn.style.display="none";confirmBtn.disabled=false;confirmBtn.style.opacity="1";confirmBtn.style.cursor="pointer";
+  }
+}
+async function confirmConsumo(){
+  if(!consumoTarget||consumoTarget.balance<=0) return;
+  const btn=document.getElementById("consumo-confirm-btn");
+  btn.disabled=true;
+  try{
+    const res=await fetch(SHEETS_URL,{method:"POST",body:new URLSearchParams({payload:JSON.stringify({
+      action:"consumoCasita",idColaborador:consumoTarget.id,nombreColaborador:consumoTarget.name
+    })})});
+    const d=await res.json();
+    if(d.status==="ok"){
+      showToast("✓ Comida cobrada a "+consumoTarget.name);
+      consumoTarget.balance=d.newBalance;
+    }else{
+      showToast("⚠ "+(d.message||"Error al cobrar"),4000);
+    }
+  }catch{
+    showToast("⚠ Sin conexión — no se pudo registrar el cobro. Intenta de nuevo.",4500);
+  }finally{
+    btn.disabled=false;
+    document.getElementById("consumo-confirm-wrap").style.display="none";
+    switchView("consumo",document.getElementById("nav-consumo"));
+  }
+}
+function cancelConsumoConfirm(){
+  consumoTarget=null;
+  document.getElementById("consumo-confirm-wrap").style.display="none";
+  startConsumoScan();
+}
+function showConsumoManual(){
+  stopConsumoScan();
+  document.getElementById("consumo-scan-wrap").style.display="none";
+  document.getElementById("consumo-confirm-wrap").style.display="none";
+  document.getElementById("consumo-manual-wrap").style.display="block";
+  const sel=document.getElementById("consumo-manual-sel");
+  sel.innerHTML='<option value="">Seleccionar…</option>'+
+    (CASITA_STAFF||[]).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+'</option>').join("");
+}
+function confirmConsumoManual(){
+  const id=document.getElementById("consumo-manual-sel").value;
+  if(!id){showToast("Selecciona un colaborador.");return;}
+  const staff=findCasitaStaff(id);
+  if(staff) showConsumoConfirm(staff);
 }
 
 // ─── Menu dropdown ──────────────────────────────────────────────
@@ -880,6 +1061,19 @@ async function saveEntry(){
     S.entries[S.mod]=[entry,...S.entries[S.mod]];
     sendToSheets(entry);
 
+    // Casita Azul: además del registro en ENTRIES (arriba), registrar la Recarga de
+    // tiquetes en TRANSACCIONES (ID-keyed) para que el saldo del colaborador se actualice.
+    if(S.mod==="casita"){
+      const cid=getCasitaId();
+      if(cid){
+        const totalTickets=eItems.reduce((s,i)=>s+(Number(i.qty)||1),0);
+        sendRecargaCasita({
+          idColaborador:cid, nombreColaborador:entry.name,
+          cantidad:totalTickets, metodoPago:entry.device, monto:entry.orderTotal
+        });
+      }
+    }
+
     // Documentos (solo nuevas entradas, no ediciones)
     if(docType){
       const tiqNum=nextTiqueteNum();
@@ -951,8 +1145,11 @@ function doEdit(id){
   document.getElementById("cancel-btn").style.display="inline-block";
   document.getElementById("f-date").value=e.date;
   document.getElementById("f-server").value=e.server||"";
-  if(S.mod==="casita") document.getElementById("f-name-sel").value=e.name;
-  else document.getElementById("f-name").value=e.name;
+  if(S.mod==="casita"){
+    const sel=document.getElementById("f-name-sel");
+    const match=Array.from(sel.options).find(o=>o.dataset.name===e.name||o.textContent===e.name);
+    sel.value=match?match.value:"";
+  }else document.getElementById("f-name").value=e.name;
   document.getElementById("f-coin").value=e.coin;
   document.getElementById("f-device").value=e.device;
   toggleRef();
@@ -1106,6 +1303,12 @@ document.addEventListener("DOMContentLoaded",async()=>{
   document.getElementById("nav-entry" ).addEventListener("click",function(){switchView("entry",this);});
   document.getElementById("nav-log"   ).addEventListener("click",function(){switchView("log",this);});
   document.getElementById("nav-report").addEventListener("click",function(){switchView("report",this);});
+  document.getElementById("nav-consumo").addEventListener("click",function(){switchView("consumo",this);});
+  document.getElementById("consumo-manual-btn").addEventListener("click",showConsumoManual);
+  document.getElementById("consumo-manual-confirm-btn").addEventListener("click",confirmConsumoManual);
+  document.getElementById("consumo-manual-cancel-btn").addEventListener("click",startConsumoScan);
+  document.getElementById("consumo-confirm-btn").addEventListener("click",confirmConsumo);
+  document.getElementById("consumo-confirm-cancel-btn").addEventListener("click",cancelConsumoConfirm);
   document.getElementById("add-item-btn").addEventListener("click",addItem);
   document.getElementById("save-btn").addEventListener("click",()=>saveEntry().catch(err=>showToast("⚠ Error al guardar: "+err.message,5000)));
   document.getElementById("cancel-btn"  ).addEventListener("click",cancelEdit);
@@ -1142,6 +1345,7 @@ document.addEventListener("DOMContentLoaded",async()=>{
   await loadCatalog();
   flushQueue();
   flushTiqueteQueue();
+  flushQueueRecarga();
   updateQBadge();
 });
 </script>
