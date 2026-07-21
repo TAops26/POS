@@ -40,43 +40,120 @@ function doPost(e) {
     }
 
     // Guardar factura en FACTURAS
+    // Layout real de la hoja: FECHA|ID|MÓDULO|NOMBRE|TIPO DE CEDULA|CEDULA|CORREO|TELÉFONO|
+    // ACT. ECONOMICA|TIPO DE COMPRA|NETO ORDEN|TOTAL ORDEN|CATEGORÍA|NETO CATEGORÍA|
+    // TOTAL CATEGORÍA|STATUS — una fila por categoría (los campos de orden se repiten en
+    // cada fila). STATUS se deja en blanco; lo llena alguien manualmente después.
     if (payload.action === 'saveFactura') {
       const ss    = SpreadsheetApp.openById(SS_ID);
       const sheet = ss.getSheetByName('FACTURAS');
-      sheet.appendRow([
+      const cats  = (payload.categoryRows && payload.categoryRows.length)
+        ? payload.categoryRows
+        : [{ category: '', net: payload.orderNet, total: payload.orderTotal }];
+      const rows = cats.map(cr => [
         payload.date, payload.id, payload.module, payload.nombre,
-        payload.tipo, payload.cedula, payload.correo,
-        payload.actividad, payload.total
+        payload.tipo, payload.cedula, payload.correo, payload.telefono || '',
+        payload.actividad, payload.tipo_compra || '',
+        payload.orderNet, payload.orderTotal,
+        cr.category || '', cr.net, cr.total,
+        ''  // STATUS
       ]);
+      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
       return respondJSON({ status: 'ok' });
     }
 
-    // Guardar entrada en ENTRIES
-    const ss    = SpreadsheetApp.openById(SS_ID);
-    const sheet = ss.getSheetByName('ENTRIES');
-
-    payload.items.forEach(item => {
+    // Recarga de tiquetes Casita Azul (compra) — escribe en TRANSACCIONES, ID-keyed.
+    // No toca ENTRIES: el frontend ya hace ese guardado por separado (sendToSheets).
+    if (payload.action === 'recargaCasita') {
+      const ss    = SpreadsheetApp.openById(SS_ID);
+      const sheet = ss.getSheetByName('TRANSACCIONES');
+      if (!sheet) {
+        return respondJSON({ status: 'error', message: 'Pestaña "TRANSACCIONES" no encontrada en el spreadsheet.' });
+      }
+      const txId = Utilities.getUuid().slice(0, 8);
       sheet.appendRow([
-        payload.date,
-        payload.server,
-        payload.name,
-        payload.coin,
-        payload.device,
-        payload.ref        || '',
-        payload.event      || '',
-        payload.orderNet,
-        payload.orderTax,
-        payload.orderTotal,
-        payload.rateAtTime || '',   // Tipo de cambio al momento del registro
-        item.product,
-        item.category,
-        item.cabys         || '',
-        item.price,                 // Net price por ítem
-        item.tax,
-        item.total,
-        item.qty           || 1     // Cantidad
+        txId,
+        new Date().toISOString(),
+        String(payload.idColaborador || ''),
+        payload.nombreColaborador || '',
+        'Recarga',
+        Number(payload.cantidad) || 0,
+        payload.metodoPago || '',
+        Number(payload.monto) || 0
       ]);
-    });
+      return respondJSON({ status: 'ok', txId });
+    }
+
+    // Consumo de tiquete Casita Azul (cobro de comida vía QR o búsqueda manual).
+    // Revalida el saldo en el servidor (defensa adicional al bloqueo del frontend) para
+    // evitar que dos dispositivos cobren al mismo colaborador casi simultáneamente cuando
+    // su saldo ya está en 0.
+    if (payload.action === 'consumoCasita') {
+      const ss         = SpreadsheetApp.openById(SS_ID);
+      const staffSheet = ss.getSheetByName('STAFF');
+      const txSheet    = ss.getSheetByName('TRANSACCIONES');
+      if (!txSheet) {
+        return respondJSON({ status: 'error', message: 'Pestaña "TRANSACCIONES" no encontrada en el spreadsheet.' });
+      }
+
+      const rows = staffSheet.getDataRange().getValues();
+      const h    = rows[0];
+      const iId  = h.indexOf('ID_Colaborador');
+      const iBal = h.indexOf('Ticket_Balance');
+      const staffRow = rows.slice(1).find(r => String(r[iId] || '').trim() === String(payload.idColaborador || '').trim());
+
+      if (!staffRow) {
+        return respondJSON({ status: 'error', message: 'Colaborador no encontrado.' });
+      }
+      const currentBalance = Number(staffRow[iBal]) || 0;
+      if (currentBalance <= 0) {
+        return respondJSON({ status: 'error', message: 'Saldo insuficiente.', balance: currentBalance });
+      }
+
+      const txId = Utilities.getUuid().slice(0, 8);
+      txSheet.appendRow([
+        txId,
+        new Date().toISOString(),
+        String(payload.idColaborador || ''),
+        payload.nombreColaborador || '',
+        'Consumo',
+        1,
+        '',
+        ''
+      ]);
+      return respondJSON({ status: 'ok', txId, newBalance: currentBalance - 1 });
+    }
+
+    // Guardar entrada en ENTRIES DOL / ENTRIES COL según la moneda del pedido.
+    // Layout real de ambas hojas: Date|Server|Name|Coin|Device|Ref|Event|Subtotal|Tax|
+    // Total|Rate|Product|Category|Cabys|Quantity|Comments — una fila por ítem, donde
+    // Subtotal/Tax/Total/Quantity son los valores de ESE ítem (no del pedido completo).
+    const ss        = SpreadsheetApp.openById(SS_ID);
+    const sheetName = payload.coin === 'USD' ? 'ENTRIES DOL' : 'ENTRIES COL';
+    const sheet     = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      return respondJSON({ status: 'error', message: 'Pestaña "' + sheetName + '" no encontrada en el spreadsheet.' });
+    }
+
+    const rows = payload.items.map(item => [
+      payload.date,
+      payload.server,
+      payload.name,
+      payload.coin,
+      payload.device,
+      payload.ref        || '',
+      payload.event      || '',
+      item.price,                  // Subtotal (neto) del ítem
+      item.tax,                    // Tax del ítem
+      item.total,                  // Total del ítem
+      payload.rateAtTime || '',    // Tipo de cambio al momento del registro
+      item.product,
+      item.category,
+      item.cabys         || '',
+      item.qty           || 1,     // Quantity
+      payload.comments   || ''
+    ]);
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
 
     return respondJSON({ status: 'ok' });
 
@@ -143,9 +220,11 @@ function doGet(e) {
   }
 }
 
-// Lee la pestaña STAFF y devuelve objeto { moduleKey: [names], all_staff: [allNames] }
+// Lee la pestaña STAFF y devuelve objeto { moduleKey: [names], all_staff: [allNames],
+// casita_staff: [{id,name,balance}] } — casita_staff alimenta el picker de Recarga y el
+// fallback manual de Consumo en el módulo Casita Azul (ver QR migration plan).
 function getStaff(ss) {
-  const result = { fb: [], farm: [], hospitality: [], casita: [], all_staff: [] };
+  const result = { fb: [], farm: [], hospitality: [], casita: [], all_staff: [], casita_staff: [] };
 
   try {
     const sheet = ss.getSheetByName('STAFF');
@@ -161,6 +240,9 @@ function getStaff(ss) {
       if (idx !== -1) colMap[idx] = moduleKey;
     });
 
+    const iId      = h.indexOf('ID_Colaborador');
+    const iBalance = h.indexOf('Ticket_Balance');
+
     rows.slice(1).forEach(row => {
       const name = String(row[0] || '').trim();
       if (!name) return;
@@ -172,9 +254,20 @@ function getStaff(ss) {
       Object.entries(colMap).forEach(([colIdx, moduleKey]) => {
         if (row[colIdx] === true) result[moduleKey].push(name);
       });
+
+      // Casita Azul: ID + saldo en vivo para los flujos de Recarga/Consumo
+      const id = iId !== -1 ? String(row[iId] || '').trim() : '';
+      if (id) {
+        result.casita_staff.push({
+          id,
+          name,
+          balance: iBalance !== -1 ? Number(row[iBalance]) || 0 : 0
+        });
+      }
     });
 
     result.all_staff.sort();
+    result.casita_staff.sort((a, b) => a.name.localeCompare(b.name));
 
   } catch(err) {
     console.error('getStaff error:', err.toString());
@@ -212,4 +305,67 @@ function respondJSON(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ── MIGRACIÓN ÚNICA — ejecutar manualmente una sola vez desde el editor ──────
+// Migra el sistema AppSheet "Sistema Cobros Cocina Casa Azul" hacia este spreadsheet.
+// Requiere que quien ejecute esta función (Nico) tenga acceso de lectura al spreadsheet
+// OLD_SS_ID. Antes de correrla:
+//   1. Crear la pestaña TRANSACCIONES en este spreadsheet con el encabezado exacto:
+//      ID_Transaccion | FechaHora | ID_Colaborador | Nombre_Colaborador | Tipo | Cantidad | Metodo_Pago | Monto
+//   2. Agregar a STAFF las columnas (en este orden, inmediatamente después de CASITA AZUL):
+//      ID_Colaborador | Ticket_Balance | QR_Code
+//      Formatear la columna ID_Colaborador como Texto sin formato (Plain text) ANTES de
+//      correr esta función, para que IDs alfanuméricos (ej. "AK998021") no se corrompan.
+// Es seguro re-ejecutar el paso de Colaboradores (sobrescribe los mismos valores), pero el
+// paso de copiar Transacciones SÍ duplicará filas si se corre dos veces — borrar las filas
+// de TRANSACCIONES (debajo del encabezado) antes de reintentar.
+const OLD_SS_ID = '1p97mjcmJ2Ge-bO2OIFq9-wAilQlJVEK7vwYmSUAbIaU';
+
+function migrateCasitaAzul() {
+  const newSS = SpreadsheetApp.openById(SS_ID);
+  const oldSS = SpreadsheetApp.openById(OLD_SS_ID);
+
+  // 1. Copiar Transacciones -> TRANSACCIONES tal cual
+  const oldTx = oldSS.getSheetByName('Transacciones').getDataRange().getValues();
+  const newTxSheet = newSS.getSheetByName('TRANSACCIONES');
+  if (!newTxSheet) throw new Error('Crea primero la pestaña TRANSACCIONES (ver instrucciones arriba).');
+  const txRows = oldTx.slice(1).filter(r => r.some(c => c !== ''));  // saltar filas vacías
+  if (txRows.length) {
+    newTxSheet.getRange(newTxSheet.getLastRow() + 1, 1, txRows.length, txRows[0].length).setValues(txRows);
+  }
+  Logger.log('Copiadas ' + txRows.length + ' filas de Transacciones.');
+
+  // 2. Emparejar Colaboradores -> STAFF por nombre, escribir ID_Colaborador + fórmulas
+  const oldCol     = oldSS.getSheetByName('Colaboradores').getDataRange().getValues();
+  const staffSheet = newSS.getSheetByName('STAFF');
+  const staffData  = staffSheet.getDataRange().getValues();
+  const staffH     = staffData[0];
+  const iIdCol     = staffH.indexOf('ID_Colaborador');
+  if (iIdCol === -1) throw new Error('Agrega primero el encabezado ID_Colaborador en STAFF (ver instrucciones arriba).');
+
+  const norm = s => String(s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+  const unmatched = [];
+
+  oldCol.slice(1).forEach(oldRow => {
+    const oldId   = String(oldRow[0] || '').trim();
+    const oldName = String(oldRow[1] || '').trim();
+    if (!oldId || !oldName) return;
+
+    const staffRowIdx = staffData.findIndex((r, idx) => idx > 0 && norm(r[0]) === norm(oldName));
+    if (staffRowIdx === -1) {
+      unmatched.push(oldName);
+      return;
+    }
+    const sheetRow = staffRowIdx + 1; // base 1 para getRange
+    staffSheet.getRange(sheetRow, iIdCol + 1).setValue(oldId);                                  // ID_Colaborador
+    staffSheet.getRange(sheetRow, iIdCol + 2).setFormula(
+      '=SUMIFS(TRANSACCIONES!F:F,TRANSACCIONES!C:C,$F' + sheetRow + ',TRANSACCIONES!E:E,"Recarga")' +
+      '-SUMIFS(TRANSACCIONES!F:F,TRANSACCIONES!C:C,$F' + sheetRow + ',TRANSACCIONES!E:E,"Consumo")'
+    );                                                                                          // Ticket_Balance
+    staffSheet.getRange(sheetRow, iIdCol + 3).setFormula('=F' + sheetRow);                      // QR_Code
+  });
+
+  Logger.log('Sin match (revisar manualmente): ' + JSON.stringify(unmatched));
+  return { unmatched };
 }
