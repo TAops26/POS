@@ -1,0 +1,404 @@
+// ============================================================
+//  TIERRAMOR — Apps Script v2
+//  Spreadsheet ID: 15bX0GlMfBvStYrmxotv6LvvrnTIZnBSQU1ja4awkcQU
+// ============================================================
+
+const SS_ID = '15bX0GlMfBvStYrmxotv6LvvrnTIZnBSQU1ja4awkcQU';
+
+const MODULE_TABS = {
+  'F&B'        : 'fb',
+  'FARM'       : 'farm',
+  'HOSPITALITY': 'hospitality',
+  'CASITA AZUL': 'casita'
+};
+
+// ── doPost ───────────────────────────────────────────────────
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.parameter.payload);
+
+    // Validar PIN
+    if (payload.action === 'validatePin') {
+      return respondJSON(checkPin(payload.pin));
+    }
+
+    // Guardar tiquete
+    if (payload.action === 'saveTiquete') {
+      const ss    = SpreadsheetApp.openById(SS_ID);
+      const sheet = ss.getSheetByName('TIQUETE ELECTRONICO');
+      if (!sheet) return respondJSON({ status: 'error', message: 'Pestana "TIQUETE ELECTRONICO" no encontrada.' });
+      sheet.appendRow([
+        payload.fecha, payload.modulo, payload.nombre,
+        payload.subtotal, payload.iva, payload.total,
+        payload.id, payload.device
+      ]);
+      return respondJSON({ status: 'ok' });
+    }
+
+    // Guardar factura
+    if (payload.action === 'saveFactura') {
+      const ss    = SpreadsheetApp.openById(SS_ID);
+      const sheet = ss.getSheetByName('FACTURAS');
+      if (!sheet) return respondJSON({ status: 'error', message: 'Pestana "FACTURAS" no encontrada.' });
+
+      const categories = payload.categoryRows || [];
+      const numFmt     = payload.coin === 'USD' ? '$#,##0.00' : '\u20A1#,##0.00';
+
+      categories.forEach(function(cat, idx) {
+        var f = idx === 0;
+        sheet.appendRow([
+          f ? payload.date        : '',
+          f ? payload.id          : '',
+          f ? payload.module      : '',
+          f ? payload.nombre      : '',
+          f ? payload.tipo        : '',
+          f ? payload.cedula      : '',
+          f ? payload.correo      : '',
+          f ? payload.telefono    : '',
+          f ? payload.actividad   : '',
+          f ? payload.tipo_compra : '',
+          f ? payload.orderNet    : '',
+          f ? payload.orderTotal  : '',
+          cat.category,
+          cat.net,
+          cat.total
+        ]);
+        var lastRow = sheet.getLastRow();
+        if (f) sheet.getRange(lastRow, 11, 1, 2).setNumberFormat(numFmt);
+        sheet.getRange(lastRow, 14, 1, 2).setNumberFormat(numFmt);
+      });
+
+      try {
+        GmailApp.sendEmail(
+          'ns@tierramor.cr,facturacion@tierramor.cr,pv@tierramor.cr',
+          'Solicitud de Factura Electronica - ' + payload.module + ' - ' + payload.nombre,
+          'Este correo requiere soporte HTML.',
+          { htmlBody: buildFacturaEmail(payload) }
+        );
+      } catch(mailErr) {
+        Logger.log('Error correo factura: ' + mailErr.toString());
+      }
+
+      return respondJSON({ status: 'ok' });
+    }
+
+    // Guardar entrada en ENTRIES DOL o ENTRIES COL
+    const ss        = SpreadsheetApp.openById(SS_ID);
+    const sheetName = payload.coin === 'USD' ? 'ENTRIES DOL' : 'ENTRIES COL';
+    const sheet     = ss.getSheetByName(sheetName);
+    if (!sheet) return respondJSON({ status: 'error', message: 'Pestana "' + sheetName + '" no encontrada.' });
+    const numFmt = payload.coin === 'USD' ? '$#,##0.00' : '\u20A1#,##0.00';
+
+    payload.items.forEach(function(item) {
+      sheet.appendRow([
+        payload.date,
+        payload.server,
+        payload.name,
+        payload.coin,
+        payload.device,
+        payload.ref        || '',
+        payload.event      || '',
+        item.price,
+        item.tax,
+        item.total,
+        payload.rateAtTime || '',
+        item.product,
+        item.category,
+        item.cabys         || '',
+        item.qty           || 1,
+        payload.comments   || ''
+      ]);
+      var lastRow = sheet.getLastRow();
+      sheet.getRange(lastRow, 8, 1, 3).setNumberFormat(numFmt);
+    });
+
+    // Notificacion al servidor (tiempo real desde STAFF)
+    try {
+      var serverEmail = getServerEmail(ss, payload.server || '');
+      if (serverEmail) {
+        GmailApp.sendEmail(
+          serverEmail,
+          'Notificacion de Transaccion - ' + payload.date,
+          'Este correo requiere soporte HTML.',
+          { htmlBody: buildServerNotificationEmail(payload) }
+        );
+      }
+    } catch(mailErr) {
+      Logger.log('Error notificacion servidor: ' + mailErr.toString());
+    }
+
+    return respondJSON({ status: 'ok' });
+
+  } catch(err) {
+    return respondJSON({ status: 'error', message: err.toString() });
+  }
+}
+
+// ── doGet ────────────────────────────────────────────────────
+function doGet(e) {
+  try {
+    const ss      = SpreadsheetApp.openById(SS_ID);
+    const catalog = [];
+
+    Object.entries(MODULE_TABS).forEach(function([tabName, moduleKey]) {
+      const sheet = ss.getSheetByName(tabName);
+      if (!sheet) return;
+
+      const rows = sheet.getDataRange().getValues();
+      if (rows.length < 2) return;
+
+      const h    = rows[0];
+      const col  = function(name) {
+        return h.findIndex(function(c) {
+          return String(c).toLowerCase().trim() === name.toLowerCase().trim();
+        });
+      };
+      const iCABYS = col('cabys');
+      const iName  = col('name');
+      const iCat   = col('category');
+      const iNet   = col('net price');
+      const iTax   = col('tax price');
+      const iPOS   = col('inside pos');
+
+      rows.slice(1).forEach(function(row) {
+        const name = String(row[iName] || '').trim();
+        if (!name)      return;
+        if (!row[iPOS]) return;
+
+        const rawNet   = Number(row[iNet]) || 0;
+        const rawTax   = Number(row[iTax]) || 0;
+        const taxPrice = Math.round(rawTax * 100) / 100;
+        const netPrice = rawNet > 0
+          ? Math.round(rawNet * 100) / 100
+          : Math.round(rawTax / 1.13 * 100) / 100;
+
+        catalog.push({
+          module   : moduleKey,
+          name     : name,
+          category : String(row[iCat]   || '').trim(),
+          cabys    : String(row[iCABYS] || '').trim(),
+          net_price: netPrice,
+          tax_price: taxPrice
+        });
+      });
+    });
+
+    const servers = getStaff(ss);
+    return respondJSON({ status: 'ok', catalog: catalog, servers: servers });
+
+  } catch(err) {
+    return respondJSON({ status: 'error', message: err.toString() });
+  }
+}
+
+// ── getStaff ─────────────────────────────────────────────────
+function getStaff(ss) {
+  const result = { fb: [], farm: [], hospitality: [], casita: [], all_staff: [] };
+
+  try {
+    const sheet = ss.getSheetByName('STAFF');
+    if (!sheet) return result;
+
+    const rows = sheet.getDataRange().getValues();
+    if (rows.length < 2) return result;
+
+    const h = rows[0];
+    const colMap = {};
+    Object.entries(MODULE_TABS).forEach(function([tabName, moduleKey]) {
+      const idx = h.findIndex(function(c) {
+        return String(c).toLowerCase().trim() === tabName.toLowerCase().trim();
+      });
+      if (idx !== -1) colMap[idx] = moduleKey;
+    });
+
+    rows.slice(1).forEach(function(row) {
+      const name = String(row[0] || '').trim();
+      if (!name) return;
+      result.all_staff.push(name);
+      Object.entries(colMap).forEach(function([colIdx, moduleKey]) {
+        if (row[colIdx] === true) result[moduleKey].push(name);
+      });
+    });
+    result.all_staff.sort();
+
+  } catch(err) {
+    console.error('getStaff error:', err.toString());
+  }
+
+  return result;
+}
+
+// ── getServerEmail ────────────────────────────────────────────
+function getServerEmail(ss, serverName) {
+  try {
+    if (!serverName) return null;
+    const sheet = ss.getSheetByName('STAFF');
+    if (!sheet) return null;
+    const rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]).trim() === serverName.trim()) {
+        var email = String(rows[i][1]).trim();
+        return email || null;
+      }
+    }
+    return null;
+  } catch(err) {
+    Logger.log('getServerEmail error: ' + err.toString());
+    return null;
+  }
+}
+
+// ── checkPin ──────────────────────────────────────────────────
+function checkPin(submitted) {
+  try {
+    const ss    = SpreadsheetApp.openById(SS_ID);
+    const sheet = ss.getSheetByName('CONFIG');
+    const rows  = sheet.getDataRange().getValues();
+    var stored  = null;
+
+    rows.forEach(function(row) {
+      if (String(row[0]).toLowerCase().trim() === 'pin') {
+        stored = String(row[1]).trim();
+      }
+    });
+
+    const valid = stored !== null && String(submitted).trim() === stored;
+    return { status: 'ok', valid: valid };
+
+  } catch(err) {
+    return { status: 'error', valid: false, message: err.toString() };
+  }
+}
+
+// ── respondJSON ───────────────────────────────────────────────
+function respondJSON(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ── buildServerNotificationEmail ─────────────────────────────
+function buildServerNotificationEmail(payload) {
+  var sym  = payload.coin === 'USD' ? '$' : '\u20A1';
+  var mods = { hospitality: 'Hospitality', fb: 'F&B', farm: 'Farm', casita: 'Casita Azul' };
+  var mod  = mods[payload.module] || payload.module || '';
+
+  function fmtNum(v) {
+    return sym + Number(v).toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  var itemRows = '';
+  var items = payload.items || [];
+  for (var i = 0; i < items.length; i++) {
+    var item    = items[i];
+    var unitNet = Number(item.price) / (Number(item.qty) || 1);
+    itemRows +=
+      '<tr>' +
+        '<td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px">' + item.product + '</td>' +
+        '<td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:12px;color:#9a8a7a">' + item.category + '</td>' +
+        '<td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;text-align:center;font-size:13px">' + (item.qty || 1) + '</td>' +
+        '<td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;text-align:right;font-size:13px">' + fmtNum(unitNet) + '</td>' +
+        '<td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;text-align:right;font-size:13px;font-weight:700">' + fmtNum(item.total) + '</td>' +
+      '</tr>';
+  }
+
+  var extraRows = '';
+  if (payload.event)    extraRows += '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase;width:130px">Evento</td><td style="font-size:13px">' + payload.event + '</td></tr>';
+  if (payload.comments) extraRows += '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Comentarios</td><td style="font-size:13px">' + payload.comments + '</td></tr>';
+
+  return '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>' +
+    '<body style="margin:0;padding:24px;background:#f5f0eb;font-family:Georgia,serif">' +
+    '<div style="max-width:560px;margin:0 auto">' +
+      '<div style="background:#544236;color:#fff;padding:24px 28px;border-radius:8px 8px 0 0">' +
+        '<h1 style="margin:0;font-size:18px;letter-spacing:.1em;text-transform:uppercase">Tierramor Hospitality Limitada</h1>' +
+        '<p style="margin:4px 0 0;font-size:11px;opacity:.8">Notificacion de Transaccion</p>' +
+      '</div>' +
+      '<div style="background:#faf7f2;padding:28px;border:1px solid #d4c8b8;border-top:none;border-radius:0 0 8px 8px">' +
+        '<table style="width:100%;border-collapse:collapse;margin-bottom:24px">' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase;width:130px">Fecha</td><td style="font-size:13px">' + payload.date + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Modulo</td><td style="font-size:13px">' + mod + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Atendido por</td><td style="font-size:13px;font-weight:700">' + (payload.server || '') + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Cliente</td><td style="font-size:13px">' + (payload.name || '') + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Pago</td><td style="font-size:13px">' + (payload.device || '') + (payload.ref ? ' - ref: ' + payload.ref : '') + '</td></tr>' +
+          extraRows +
+        '</table>' +
+        '<table style="width:100%;border-collapse:collapse;margin-bottom:20px">' +
+          '<thead><tr style="background:#544236;color:#fff">' +
+            '<th style="padding:8px 12px;text-align:left;font-size:10px;text-transform:uppercase">Producto</th>' +
+            '<th style="padding:8px 12px;text-align:left;font-size:10px;text-transform:uppercase">Categoria</th>' +
+            '<th style="padding:8px 12px;text-align:center;font-size:10px;text-transform:uppercase">Cant.</th>' +
+            '<th style="padding:8px 12px;text-align:right;font-size:10px;text-transform:uppercase">P. Unit.</th>' +
+            '<th style="padding:8px 12px;text-align:right;font-size:10px;text-transform:uppercase">Total</th>' +
+          '</tr></thead>' +
+          '<tbody>' + itemRows + '</tbody>' +
+        '</table>' +
+        '<div style="display:flex;justify-content:flex-end">' +
+          '<table style="width:230px;border-collapse:collapse">' +
+            '<tr><td style="padding:5px 0;font-size:13px;color:#9a8a7a">Subtotal</td><td style="padding:5px 0;font-size:13px;text-align:right">' + fmtNum(payload.orderNet) + '</td></tr>' +
+            '<tr><td style="padding:5px 0;font-size:13px;color:#9a8a7a">IVA (13%)</td><td style="padding:5px 0;font-size:13px;text-align:right">' + fmtNum(payload.orderTax) + '</td></tr>' +
+            '<tr><td colspan="2" style="border-top:2px solid #544236;padding-top:2px"></td></tr>' +
+            '<tr><td style="padding:8px 0;font-weight:700;color:#544236;font-size:14px">Total</td><td style="padding:8px 0;font-weight:800;color:#544236;font-size:16px;text-align:right">' + fmtNum(payload.orderTotal) + '</td></tr>' +
+          '</table>' +
+        '</div>' +
+        '<p style="font-size:10px;color:#b0a090;margin-top:20px;text-align:center">Notificacion automatica - Revenue Tracker - Tierramor Hospitality Limitada</p>' +
+      '</div>' +
+    '</div></body></html>';
+}
+
+// ── buildFacturaEmail ─────────────────────────────────────────
+function buildFacturaEmail(p) {
+  var sym = p.coin === 'USD' ? '$' : '\u20A1';
+
+  function fmtNum(v) {
+    return sym + Number(v).toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  var catRows = '';
+  var categories = p.categoryRows || [];
+  for (var i = 0; i < categories.length; i++) {
+    var c = categories[i];
+    catRows +=
+      '<tr>' +
+        '<td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px">' + c.category + '</td>' +
+        '<td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;text-align:right;font-size:13px">' + fmtNum(c.net) + '</td>' +
+        '<td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;text-align:right;font-size:13px;font-weight:700">' + fmtNum(c.total) + '</td>' +
+      '</tr>';
+  }
+
+  return '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>' +
+    '<body style="margin:0;padding:24px;background:#f5f0eb;font-family:Georgia,serif">' +
+    '<div style="max-width:560px;margin:0 auto">' +
+      '<div style="background:#544236;color:#fff;padding:24px 28px;border-radius:8px 8px 0 0">' +
+        '<h1 style="margin:0;font-size:18px;letter-spacing:.1em;text-transform:uppercase">Tierramor Hospitality Limitada</h1>' +
+        '<p style="margin:4px 0 0;font-size:11px;opacity:.8">Santa Cruz, Guanacaste - ns@tierramor.cr</p>' +
+      '</div>' +
+      '<div style="background:#faf7f2;padding:28px;border:1px solid #d4c8b8;border-top:none;border-radius:0 0 8px 8px">' +
+        '<h2 style="color:#544236;font-size:15px;margin:0 0 20px">Solicitud de Factura Electronica</h2>' +
+        '<table style="width:100%;border-collapse:collapse;margin-bottom:24px">' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase;width:150px">Fecha</td><td style="font-size:13px">' + p.date + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Modulo</td><td style="font-size:13px">' + p.module + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Nombre</td><td style="font-size:13px;font-weight:700">' + p.nombre + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Tipo Cedula</td><td style="font-size:13px">' + p.tipo + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Cedula</td><td style="font-size:13px">' + p.cedula + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Correo</td><td style="font-size:13px">' + p.correo + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Telefono</td><td style="font-size:13px">' + (p.telefono || '-') + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Act. Economica</td><td style="font-size:13px">' + (p.actividad || '-') + '</td></tr>' +
+          '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase">Tipo de Compra</td><td style="font-size:13px">' + (p.tipo_compra || '-') + '</td></tr>' +
+        '</table>' +
+        '<h3 style="color:#544236;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 10px">Desglose por Categoria</h3>' +
+        '<table style="width:100%;border-collapse:collapse;margin-bottom:20px">' +
+          '<thead><tr style="background:#544236;color:#fff">' +
+            '<th style="padding:8px 12px;text-align:left;font-size:10px;text-transform:uppercase">Categoria</th>' +
+            '<th style="padding:8px 12px;text-align:right;font-size:10px;text-transform:uppercase">Neto</th>' +
+            '<th style="padding:8px 12px;text-align:right;font-size:10px;text-transform:uppercase">Total</th>' +
+          '</tr></thead>' +
+          '<tbody>' + catRows + '</tbody>' +
+        '</table>' +
+        '<div style="background:#e8e0d4;border-radius:6px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center">' +
+          '<span style="font-weight:700;color:#544236;font-size:13px">Total Orden</span>' +
+          '<span style="font-weight:800;font-size:18px;color:#544236">' + fmtNum(p.orderTotal) + '</span>' +
+        '</div>' +
+        '<p style="font-size:10px;color:#b0a090;margin-top:20px;text-align:center">Generado automaticamente desde el Revenue Tracker - Tierramor Hospitality Limitada</p>' +
+      '</div>' +
+    '</div></body></html>';
+}
