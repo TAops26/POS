@@ -31,12 +31,35 @@ function doPost(e) {
       if (!sheet) {
         return respondJSON({ status: 'error', message: 'Pestaña "TIQUETE ELECTRONICO" no encontrada en el spreadsheet.' });
       }
+      // El número de tiquete se asigna acá (no en el frontend) para que sea único entre
+      // dispositivos: dos usuarios guardando al mismo tiempo desde equipos distintos antes
+      // sacaban el mismo número porque cada uno llevaba su propio contador en localStorage.
+      const tiqNum = nextTiqueteNumber(payload.fecha);
       sheet.appendRow([
         payload.fecha, payload.modulo, payload.nombre,
         payload.subtotal, payload.iva, payload.total,
-        payload.id, payload.device
+        payload.id, payload.device, tiqNum
       ]);
-      return respondJSON({ status: 'ok' });
+
+      // Notificación por correo — se envía en todo guardado de Tiquete o Factura
+      // Electrónica (esta acción corre para ambos), a facturas@/pv@ y a quien hizo la
+      // venta. Nunca debe tumbar el guardado si el correo falla.
+      try {
+        const recipients = ['facturas@tierramor.cr', 'pv@tierramor.cr'];
+        const staffEmail = getStaffEmail(ss, payload.server || '');
+        if (staffEmail) recipients.push(staffEmail);
+        const docLabel = payload.docType === 'factura' ? 'Factura Electrónica' : 'Tiquete Electrónico';
+        GmailApp.sendEmail(
+          recipients.join(','),
+          'Nueva ' + docLabel + ' — ' + payload.modulo + ' — ' + tiqNum,
+          'Este correo requiere soporte HTML.',
+          { htmlBody: buildTiqueteEmail(payload, tiqNum, docLabel) }
+        );
+      } catch (mailErr) {
+        console.error('Error enviando correo de tiquete: ' + mailErr.toString());
+      }
+
+      return respondJSON({ status: 'ok', tiqNum });
     }
 
     // Guardar factura en FACTURAS
@@ -368,4 +391,88 @@ function migrateCasitaAzul() {
 
   Logger.log('Sin match (revisar manualmente): ' + JSON.stringify(unmatched));
   return { unmatched };
+}
+
+// Asigna el próximo número de tiquete del día de forma atómica (LockService), para que
+// dos guardados simultáneos desde dispositivos distintos nunca saquen el mismo número.
+// El contador vive en Script Properties, una entrada por fecha (fecha viene como YYYY-MM-DD).
+function nextTiqueteNumber(fecha) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const key   = 'tiqCounter_' + fecha;
+    const n     = (Number(props.getProperty(key)) || 0) + 1;
+    props.setProperty(key, String(n));
+    const [yyyy, mm, dd] = fecha.split('-');
+    return `TM-${dd}${mm}${yyyy}-${String(n).padStart(3, '0')}`;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Busca el correo de un colaborador en STAFF por nombre (columna "Email").
+function getStaffEmail(ss, name) {
+  try {
+    if (!name) return null;
+    const sheet = ss.getSheetByName('STAFF');
+    if (!sheet) return null;
+    const rows = sheet.getDataRange().getValues();
+    if (rows.length < 2) return null;
+    const iEmail = rows[0].indexOf('Email');
+    if (iEmail === -1) return null;
+    const match = rows.slice(1).find(row => String(row[0] || '').trim() === name.trim());
+    const email = match ? String(match[iEmail] || '').trim() : '';
+    return email || null;
+  } catch (err) {
+    console.error('getStaffEmail error:', err.toString());
+    return null;
+  }
+}
+
+// Correo de notificación enviado en cada guardado de Tiquete/Factura Electrónica.
+// Cuando es Factura, además incluye los datos del cliente (payload.facNombre/tipo/
+// cedula/correo/telefono/actividad/tipo_compra) que el frontend manda solo en ese caso.
+function buildTiqueteEmail(payload, tiqNum, docLabel) {
+  const fmtNum = v => Number(v).toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const row = (label, value) => '<tr><td style="padding:5px 0;color:#9a8a7a;font-size:11px;text-transform:uppercase;width:140px">' + label + '</td><td style="font-size:13px">' + value + '</td></tr>';
+
+  let facturaRows = '';
+  if (payload.docType === 'factura') {
+    facturaRows =
+      '<h3 style="color:#544236;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:20px 0 6px">Datos de Facturación</h3>' +
+      '<table style="width:100%;border-collapse:collapse">' +
+        row('Nombre', payload.facNombre || '') +
+        row('Tipo Cédula', payload.tipo || '') +
+        row('Cédula', payload.cedula || '') +
+        row('Correo', payload.correo || '') +
+        row('Teléfono', payload.telefono || '-') +
+        row('Act. Económica', payload.actividad || '-') +
+        row('Tipo de Compra', payload.tipo_compra || '-') +
+      '</table>';
+  }
+
+  return '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>' +
+    '<body style="margin:0;padding:24px;background:#f5f0eb;font-family:Georgia,serif">' +
+    '<div style="max-width:520px;margin:0 auto">' +
+      '<div style="background:#544236;color:#fff;padding:24px 28px;border-radius:8px 8px 0 0">' +
+        '<h1 style="margin:0;font-size:18px;letter-spacing:.1em;text-transform:uppercase">Tierramor</h1>' +
+        '<p style="margin:4px 0 0;font-size:11px;opacity:.8">' + docLabel + '</p>' +
+      '</div>' +
+      '<div style="background:#faf7f2;padding:28px;border:1px solid #d4c8b8;border-top:none;border-radius:0 0 8px 8px">' +
+        '<table style="width:100%;border-collapse:collapse">' +
+          row('Tiquete No.', '<strong>' + tiqNum + '</strong>') +
+          row('Fecha', payload.fecha) +
+          row('Módulo', payload.modulo) +
+          row('Cliente', payload.nombre || '') +
+          row('Atendido por', payload.server || '') +
+          row('Pago', payload.device || '') +
+          row('Subtotal', fmtNum(payload.subtotal)) +
+          row('IVA', fmtNum(payload.iva)) +
+          '<tr><td style="padding:8px 0;font-weight:700;color:#544236;font-size:14px">Total</td><td style="padding:8px 0;font-weight:800;color:#544236;font-size:16px">' + fmtNum(payload.total) + '</td></tr>' +
+        '</table>' +
+        facturaRows +
+        '<p style="font-size:10px;color:#b0a090;margin-top:20px;text-align:center">Notificación automática — Tierramor POS</p>' +
+      '</div>' +
+    '</div></body></html>';
 }
