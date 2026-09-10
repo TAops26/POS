@@ -65,23 +65,20 @@ function doPost(e) {
     // Guardar factura en FACTURAS
     // Layout real de la hoja: FECHA|ID|MÓDULO|NOMBRE|TIPO DE CEDULA|CEDULA|CORREO|TELÉFONO|
     // ACT. ECONOMICA|TIPO DE COMPRA|NETO ORDEN|TOTAL ORDEN|CATEGORÍA|NETO CATEGORÍA|
-    // TOTAL CATEGORÍA|STATUS — una fila por categoría (los campos de orden se repiten en
-    // cada fila). STATUS se deja en blanco; lo llena alguien manualmente después.
+    // TOTAL CATEGORÍA|STATUS — una fila por venta (el desglose por SKU ya vive en ENTRIES).
+    // STATUS se deja en blanco; lo llena alguien manualmente después.
     if (payload.action === 'saveFactura') {
       const ss    = SpreadsheetApp.openById(SS_ID);
       const sheet = ss.getSheetByName('FACTURAS');
-      const cats  = (payload.categoryRows && payload.categoryRows.length)
-        ? payload.categoryRows
-        : [{ category: '', net: payload.orderNet, total: payload.orderTotal }];
-      const rows = cats.map(cr => [
+      const row = [
         payload.date, payload.id, payload.module, payload.nombre,
         payload.tipo, payload.cedula, payload.correo, payload.telefono || '',
         payload.actividad, payload.tipo_compra || '',
         payload.orderNet, payload.orderTotal,
-        cr.category || '', cr.net, cr.total,
+        '', payload.orderNet, payload.orderTotal,
         ''  // STATUS
-      ]);
-      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+      ];
+      sheet.appendRow(row);
       return respondJSON({ status: 'ok' });
     }
 
