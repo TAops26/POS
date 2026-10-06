@@ -12,6 +12,14 @@ const MODULE_TABS = {
   'CASITA AZUL': 'casita'
 };
 
+const QUOTE_HEADERS = [
+  'QUOTE_ID', 'QUOTE_NUMBER', 'CREATED_AT', 'DATE', 'MODULE', 'RESPONSIBLE',
+  'CLIENT_NAME', 'CLIENT_EMAIL', 'CLIENT_PHONE', 'COIN', 'PRODUCT', 'CATEGORY',
+  'CABYS', 'QUANTITY', 'UNIT_NET', 'LINE_NET', 'LINE_TAX', 'LINE_TOTAL',
+  'ORDER_NET', 'ORDER_TAX', 'ORDER_TOTAL', 'COMMENTS', 'STATUS',
+  'CONVERTED_AT', 'SALE_ID', 'CONVERTED_DOC_TYPE', 'TIQUETE_NUMBER'
+];
+
 // ── doPost ───────────────────────────────────────────────────
 // Maneja: guardar entrada | validar PIN
 // ─────────────────────────────────────────────────────────────
@@ -22,6 +30,14 @@ function doPost(e) {
     // Validación de PIN (edit, delete, change rate)
     if (payload.action === 'validatePin') {
       return respondJSON(checkPin(payload.pin));
+    }
+
+    if (payload.action === 'saveCotizacion') {
+      return respondJSON(saveCotizacion(payload));
+    }
+
+    if (payload.action === 'convertCotizacion') {
+      return respondJSON(convertCotizacion(payload));
     }
 
     // Guardar tiquete en TIQUETE ELECTRONICO
@@ -188,6 +204,9 @@ function doPost(e) {
 function doGet(e) {
   try {
     const ss      = SpreadsheetApp.openById(SS_ID);
+    if (e && e.parameter && e.parameter.action === 'listCotizaciones') {
+      return respondJSON({ status: 'ok', quotes: listCotizaciones(ss) });
+    }
     const catalog = [];
 
     Object.entries(MODULE_TABS).forEach(([tabName, moduleKey]) => {
@@ -397,15 +416,28 @@ function nextTiqueteNumber(fecha) {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    const props = PropertiesService.getScriptProperties();
-    const key   = 'tiqCounter_' + fecha;
-    const n     = (Number(props.getProperty(key)) || 0) + 1;
-    props.setProperty(key, String(n));
-    const [yyyy, mm, dd] = fecha.split('-');
-    return `TM-${dd}${mm}${yyyy}-${String(n).padStart(3, '0')}`;
+    return nextTiqueteNumberUnlocked(fecha);
   } finally {
     lock.releaseLock();
   }
+}
+
+function nextTiqueteNumberUnlocked(fecha) {
+  const props = PropertiesService.getScriptProperties();
+  const key   = 'tiqCounter_' + fecha;
+  const n     = (Number(props.getProperty(key)) || 0) + 1;
+  props.setProperty(key, String(n));
+  const parts = String(fecha).split('-');
+  return 'TM-' + parts[2] + parts[1] + parts[0] + '-' + String(n).padStart(3, '0');
+}
+
+function nextCotizacionNumberUnlocked(fecha) {
+  const props = PropertiesService.getScriptProperties();
+  const key   = 'quoteCounter_' + fecha;
+  const n     = (Number(props.getProperty(key)) || 0) + 1;
+  props.setProperty(key, String(n));
+  const parts = String(fecha).split('-');
+  return 'COT-' + parts[2] + parts[1] + parts[0] + '-' + String(n).padStart(3, '0');
 }
 
 // Busca el correo de un colaborador en STAFF por nombre (columna "Email").
@@ -472,4 +504,349 @@ function buildTiqueteEmail(payload, tiqNum, docLabel) {
         '<p style="font-size:10px;color:#b0a090;margin-top:20px;text-align:center">Notificación automática — Tierramor POS</p>' +
       '</div>' +
     '</div></body></html>';
+}
+
+// ── Cotizaciones de Finca ─────────────────────────────────────
+
+function ensureCotizacionesSheet(ss) {
+  let sheet = ss.getSheetByName('COTIZACIONES');
+  if (!sheet) {
+    sheet = ss.insertSheet('COTIZACIONES');
+    sheet.getRange(1, 1, 1, QUOTE_HEADERS.length).setValues([QUOTE_HEADERS]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, QUOTE_HEADERS.length).setFontWeight('bold');
+    return sheet;
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, QUOTE_HEADERS.length).setValues([QUOTE_HEADERS]);
+    sheet.setFrozenRows(1);
+    return sheet;
+  }
+  const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), QUOTE_HEADERS.length)).getValues()[0];
+  const missing = QUOTE_HEADERS.filter(header => headers.indexOf(header) === -1);
+  if (missing.length) throw new Error('La pestaña COTIZACIONES no tiene estas columnas: ' + missing.join(', '));
+  return sheet;
+}
+
+function quoteHeaderMap(sheet) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const map = {};
+  headers.forEach((header, index) => { map[String(header).trim()] = index; });
+  return map;
+}
+
+function normalizeCotizacion(payload) {
+  const email = String(payload.clientEmail || '').trim();
+  const date = String(payload.date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Fecha de cotización inválida.');
+  if (String(payload.module || '').toLowerCase() !== 'farm') throw new Error('Las cotizaciones solo están disponibles para Finca.');
+  if (!String(payload.server || '').trim()) throw new Error('El responsable es requerido.');
+  if (!String(payload.clientName || '').trim()) throw new Error('El nombre del cliente es requerido.');
+  if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('El correo del cliente no es válido.');
+  if (!String(payload.clientPhone || '').trim()) throw new Error('El teléfono del cliente es requerido.');
+  if (!Array.isArray(payload.items) || !payload.items.length) throw new Error('La cotización debe incluir al menos un producto.');
+
+  const items = payload.items.map(item => {
+    const qty = Math.max(1, Number(item.qty) || 1);
+    const lineNet = roundMoney(item.price);
+    const lineTotal = roundMoney(item.total);
+    if (!String(item.product || '').trim() || lineNet <= 0 || lineTotal <= 0) throw new Error('La cotización contiene un producto inválido.');
+    return {
+      product: String(item.product).trim(),
+      category: String(item.category || '').trim(),
+      cabys: String(item.cabys || '').trim(),
+      qty,
+      unitNet: roundMoney(lineNet / qty),
+      lineNet,
+      lineTax: roundMoney(lineTotal - lineNet),
+      lineTotal
+    };
+  });
+  const orderNet = roundMoney(items.reduce((sum, item) => sum + item.lineNet, 0));
+  const orderTotal = roundMoney(items.reduce((sum, item) => sum + item.lineTotal, 0));
+  return {
+    id: String(payload.id || Utilities.getUuid()),
+    date,
+    module: 'farm',
+    server: String(payload.server).trim(),
+    clientName: String(payload.clientName).trim(),
+    clientEmail: email,
+    clientPhone: String(payload.clientPhone).trim(),
+    coin: payload.coin === 'USD' ? 'USD' : 'CRC',
+    items,
+    orderNet,
+    orderTax: roundMoney(orderTotal - orderNet),
+    orderTotal,
+    comments: String(payload.comments || '').trim(),
+    status: 'Pendiente'
+  };
+}
+
+function saveCotizacion(payload) {
+  const quote = normalizeCotizacion(payload);
+  const ss = SpreadsheetApp.openById(SS_ID);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = ensureCotizacionesSheet(ss);
+    const existing = listCotizaciones(ss).find(item => item.id === quote.id);
+    if (existing) return { status: 'ok', quote: existing, duplicate: true, warning: 'La cotización ya había sido registrada.' };
+
+    quote.quoteNumber = nextCotizacionNumberUnlocked(quote.date);
+    quote.createdAt = new Date().toISOString();
+    const rows = quote.items.map(item => [
+      quote.id, quote.quoteNumber, quote.createdAt, quote.date, 'Farm', quote.server,
+      quote.clientName, quote.clientEmail, quote.clientPhone, quote.coin,
+      item.product, item.category, item.cabys, item.qty, item.unitNet,
+      item.lineNet, item.lineTax, item.lineTotal,
+      quote.orderNet, quote.orderTax, quote.orderTotal, quote.comments, quote.status,
+      '', '', '', ''
+    ]);
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, QUOTE_HEADERS.length).setValues(rows);
+  } finally {
+    lock.releaseLock();
+  }
+
+  let warning = '';
+  try {
+    const staffEmail = getStaffEmail(ss, quote.server);
+    const html = buildCotizacionDocumentHtml(quote);
+    const pdf = Utilities.newBlob(html, 'text/html', quote.quoteNumber + '.html')
+      .getAs(MimeType.PDF)
+      .setName(quote.quoteNumber + '.pdf');
+    const options = { htmlBody: html, attachments: [pdf], name: 'Tierramor POS' };
+    if (staffEmail) options.cc = staffEmail;
+    GmailApp.sendEmail(
+      quote.clientEmail,
+      'Cotización ' + quote.quoteNumber + ' — Tierramor Farm',
+      'Adjuntamos la cotización ' + quote.quoteNumber + ' de Tierramor Farm.',
+      options
+    );
+    if (!staffEmail) warning = 'No se encontró el correo del responsable en STAFF.';
+  } catch (mailErr) {
+    console.error('Error enviando cotización: ' + mailErr.toString());
+    warning = 'La cotización se guardó, pero el correo no pudo enviarse.';
+  }
+  return { status: 'ok', quote, warning };
+}
+
+function listCotizaciones(ss) {
+  const sheet = ensureCotizacionesSheet(ss);
+  if (sheet.getLastRow() < 2) return [];
+  const values = sheet.getDataRange().getValues();
+  const h = quoteHeaderMap(sheet);
+  const grouped = {};
+  values.slice(1).forEach(row => {
+    const id = String(row[h.QUOTE_ID] || '').trim();
+    if (!id) return;
+    if (!grouped[id]) {
+      grouped[id] = {
+        id,
+        quoteNumber: String(row[h.QUOTE_NUMBER] || ''),
+        createdAt: serializeCell(row[h.CREATED_AT]),
+        date: serializeDateCell(row[h.DATE]),
+        module: 'farm',
+        server: String(row[h.RESPONSIBLE] || ''),
+        clientName: String(row[h.CLIENT_NAME] || ''),
+        clientEmail: String(row[h.CLIENT_EMAIL] || ''),
+        clientPhone: String(row[h.CLIENT_PHONE] || ''),
+        coin: String(row[h.COIN] || 'CRC'),
+        orderNet: Number(row[h.ORDER_NET]) || 0,
+        orderTax: Number(row[h.ORDER_TAX]) || 0,
+        orderTotal: Number(row[h.ORDER_TOTAL]) || 0,
+        comments: String(row[h.COMMENTS] || ''),
+        status: String(row[h.STATUS] || 'Pendiente'),
+        convertedAt: serializeCell(row[h.CONVERTED_AT]),
+        saleId: String(row[h.SALE_ID] || ''),
+        convertedDocType: String(row[h.CONVERTED_DOC_TYPE] || ''),
+        convertedTiqueteNumber: String(row[h.TIQUETE_NUMBER] || ''),
+        items: []
+      };
+    }
+    grouped[id].items.push({
+      product: String(row[h.PRODUCT] || ''),
+      category: String(row[h.CATEGORY] || ''),
+      cabys: String(row[h.CABYS] || ''),
+      qty: Number(row[h.QUANTITY]) || 1,
+      unitNet: Number(row[h.UNIT_NET]) || 0,
+      lineNet: Number(row[h.LINE_NET]) || 0,
+      lineTax: Number(row[h.LINE_TAX]) || 0,
+      lineTotal: Number(row[h.LINE_TOTAL]) || 0
+    });
+  });
+  return Object.values(grouped).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function convertCotizacion(payload) {
+  const quoteId = String(payload.quoteId || '').trim();
+  const entry = payload.entry || {};
+  const docType = payload.docType;
+  if (!quoteId) throw new Error('Falta el ID de la cotización.');
+  if (docType !== 'tiquete' && docType !== 'factura') throw new Error('Selecciona Tiquete o Factura para la venta.');
+  validateSaleEntry(entry);
+  if (docType === 'factura') {
+    const factura = payload.factura || {};
+    if (!String(factura.facNombre || '').trim() || !String(factura.cedula || '').trim() || !/^\S+@\S+\.\S+$/.test(String(factura.correo || '').trim())) {
+      throw new Error('Nombre, cédula y correo son requeridos para la factura.');
+    }
+  }
+
+  const ss = SpreadsheetApp.openById(SS_ID);
+  const lock = LockService.getScriptLock();
+  let result;
+  let notification;
+  lock.waitLock(20000);
+  try {
+    const quoteSheet = ensureCotizacionesSheet(ss);
+    const values = quoteSheet.getDataRange().getValues();
+    const h = quoteHeaderMap(quoteSheet);
+    const matchingRows = [];
+    values.slice(1).forEach((row, offset) => {
+      if (String(row[h.QUOTE_ID] || '').trim() === quoteId) matchingRows.push({ number: offset + 2, values: row });
+    });
+    if (!matchingRows.length) throw new Error('Cotización no encontrada.');
+
+    const currentStatus = String(matchingRows[0].values[h.STATUS] || 'Pendiente');
+    const existingSaleId = String(matchingRows[0].values[h.SALE_ID] || '');
+    if (currentStatus === 'Convertida') {
+      if (existingSaleId === String(entry.id)) {
+        return { status: 'ok', idempotent: true, tiqNum: String(matchingRows[0].values[h.TIQUETE_NUMBER] || '') };
+      }
+      throw new Error('Esta cotización ya fue convertida en otra venta.');
+    }
+    if (currentStatus !== 'Pendiente') throw new Error('La cotización no está disponible para convertir.');
+
+    const entrySheet = ss.getSheetByName(entry.coin === 'USD' ? 'ENTRIES DOL' : 'ENTRIES COL');
+    const tiqueteSheet = ss.getSheetByName('TIQUETE ELECTRONICO');
+    const facturaSheet = docType === 'factura' ? ss.getSheetByName('FACTURAS') : null;
+    if (!entrySheet) throw new Error('No se encontró la hoja de entradas para ' + entry.coin + '.');
+    if (!tiqueteSheet) throw new Error('No se encontró la hoja TIQUETE ELECTRONICO.');
+    if (docType === 'factura' && !facturaSheet) throw new Error('No se encontró la hoja FACTURAS.');
+
+    appendSaleEntryRows(entrySheet, entry);
+    const tiqNum = nextTiqueteNumberUnlocked(entry.date);
+    tiqueteSheet.appendRow([
+      entry.date, 'Farm', entry.name, entry.orderNet, entry.orderTax,
+      entry.orderTotal, entry.id, entry.device, tiqNum
+    ]);
+    if (docType === 'factura') appendConvertedFactura(facturaSheet, entry, payload.factura || {});
+
+    const convertedAt = new Date().toISOString();
+    matchingRows.forEach(match => {
+      quoteSheet.getRange(match.number, h.STATUS + 1).setValue('Convertida');
+      quoteSheet.getRange(match.number, h.CONVERTED_AT + 1).setValue(convertedAt);
+      quoteSheet.getRange(match.number, h.SALE_ID + 1).setValue(entry.id);
+      quoteSheet.getRange(match.number, h.CONVERTED_DOC_TYPE + 1).setValue(docType);
+      quoteSheet.getRange(match.number, h.TIQUETE_NUMBER + 1).setValue(tiqNum);
+    });
+
+    notification = {
+      fecha: entry.date, modulo: 'Farm', nombre: entry.name,
+      subtotal: entry.orderNet, iva: entry.orderTax, total: entry.orderTotal,
+      id: entry.id, device: entry.device, server: entry.server, docType,
+      facNombre: payload.factura && payload.factura.facNombre,
+      tipo: payload.factura && payload.factura.tipo,
+      cedula: payload.factura && payload.factura.cedula,
+      correo: payload.factura && payload.factura.correo,
+      telefono: payload.factura && payload.factura.telefono,
+      actividad: payload.factura && payload.factura.actividad,
+      tipo_compra: payload.factura && payload.factura.tipo_compra
+    };
+    result = { status: 'ok', tiqNum };
+  } finally {
+    lock.releaseLock();
+  }
+
+  try {
+    const recipients = ['facturas@tierramor.cr', 'pv@tierramor.cr'];
+    const staffEmail = getStaffEmail(ss, notification.server || '');
+    if (staffEmail) recipients.push(staffEmail);
+    const label = docType === 'factura' ? 'Factura Electrónica' : 'Tiquete Electrónico';
+    GmailApp.sendEmail(recipients.join(','), 'Nueva ' + label + ' — Farm — ' + result.tiqNum,
+      'Este correo requiere soporte HTML.', { htmlBody: buildTiqueteEmail(notification, result.tiqNum, label) });
+  } catch (mailErr) {
+    console.error('Error enviando correo de venta convertida: ' + mailErr.toString());
+    result.warning = 'La venta se registró, pero falló su correo de notificación.';
+  }
+  return result;
+}
+
+function appendSaleEntryRows(sheet, entry) {
+  const rows = entry.items.map(item => [
+    entry.date, entry.server, entry.name, entry.coin, entry.device,
+    entry.ref || '', entry.event || '', Number(item.price) || 0,
+    Number(item.tax) || 0, Number(item.total) || 0, entry.rateAtTime || '',
+    item.product, item.category, item.cabys || '', Number(item.qty) || 1,
+    entry.comments || ''
+  ]);
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+}
+
+function appendConvertedFactura(sheet, entry, factura) {
+  sheet.appendRow([
+    entry.date, entry.id, 'Farm', factura.facNombre || entry.name,
+    factura.tipo || '', factura.cedula || '', factura.correo || '', factura.telefono || '',
+    factura.actividad || '', factura.tipo_compra || '', entry.orderNet, entry.orderTotal,
+    '', entry.orderNet, entry.orderTotal, ''
+  ]);
+}
+
+function validateSaleEntry(entry) {
+  if (!entry || String(entry.module) !== 'farm') throw new Error('La venta convertida debe pertenecer a Finca.');
+  if (!String(entry.id || '').trim()) throw new Error('Falta el ID de la venta.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(entry.date || ''))) throw new Error('Fecha de venta inválida.');
+  if (!String(entry.server || '').trim() || !String(entry.name || '').trim()) throw new Error('Cliente y responsable son requeridos.');
+  if (!Array.isArray(entry.items) || !entry.items.length) throw new Error('La venta no contiene productos.');
+  if (!entry.items.every(item => String(item.product || '').trim() && Number(item.total) > 0)) throw new Error('La venta contiene productos inválidos.');
+  entry.coin = entry.coin === 'USD' ? 'USD' : 'CRC';
+  entry.orderNet = roundMoney(entry.items.reduce((sum, item) => sum + (Number(item.price) || 0), 0));
+  entry.orderTotal = roundMoney(entry.items.reduce((sum, item) => sum + (Number(item.total) || 0), 0));
+  entry.orderTax = roundMoney(entry.orderTotal - entry.orderNet);
+}
+
+function buildCotizacionDocumentHtml(quote) {
+  const rows = quote.items.map(item =>
+    '<tr><td>' + escapeHtml(item.product) + '</td><td style="text-align:center">' + item.qty +
+    '</td><td style="text-align:right">' + formatQuoteMoney(item.unitNet, quote.coin) +
+    '</td><td style="text-align:right">' + formatQuoteMoney(item.lineTotal, quote.coin) + '</td></tr>'
+  ).join('');
+  const comments = quote.comments
+    ? '<div class="comments"><strong>Comentarios</strong><br>' + escapeHtml(quote.comments).replace(/\n/g, '<br>') + '</div>'
+    : '';
+  return '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><style>' +
+    'body{font-family:Georgia,serif;color:#3a2e28;padding:28px}.page{max-width:700px;margin:auto}.head{border-bottom:3px solid #76724e;padding-bottom:16px}.brand{font-size:22px;font-weight:bold;letter-spacing:.1em}.title{font-size:25px;color:#76724e;margin:24px 0 3px;text-transform:uppercase}.notice{font-size:11px;color:#995c44;font-weight:bold;text-transform:uppercase}table{width:100%;border-collapse:collapse;margin:20px 0}th{background:#76724e;color:white;padding:8px;text-align:left;font-size:11px}td{padding:8px;border-bottom:1px solid #ddd;font-size:12px}.totals{margin-left:auto;width:250px}.total{display:flex;justify-content:space-between;padding:5px}.grand{background:#e8e0d4;font-weight:bold;font-size:16px}.comments{margin-top:22px;background:#f0ebe4;padding:14px;font-size:12px}.foot{margin-top:28px;border-top:1px solid #ddd;padding-top:12px;text-align:center;color:#887766;font-size:10px}' +
+    '</style></head><body><div class="page"><div class="head"><div class="brand">TIERRAMOR</div><div>Santa Cruz, Guanacaste</div></div>' +
+    '<div class="title">Cotización</div><div class="notice">No es comprobante fiscal</div>' +
+    '<p><strong>' + escapeHtml(quote.quoteNumber) + '</strong> · ' + escapeHtml(quote.date) + '</p>' +
+    '<p><strong>Cliente:</strong> ' + escapeHtml(quote.clientName) + '<br><strong>Correo:</strong> ' + escapeHtml(quote.clientEmail) +
+    '<br><strong>Teléfono:</strong> ' + escapeHtml(quote.clientPhone) + '<br><strong>Responsable:</strong> ' + escapeHtml(quote.server) + '</p>' +
+    '<table><thead><tr><th>Descripción</th><th>Cant.</th><th>Precio unit.</th><th>Total</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<div class="totals"><div class="total"><span>Subtotal</span><span>' + formatQuoteMoney(quote.orderNet, quote.coin) + '</span></div>' +
+    '<div class="total"><span>IVA (13%)</span><span>' + formatQuoteMoney(quote.orderTax, quote.coin) + '</span></div>' +
+    '<div class="total grand"><span>Total</span><span>' + formatQuoteMoney(quote.orderTotal, quote.coin) + '</span></div></div>' + comments +
+    '<div class="foot">Cotización emitida por Tierramor Hospitality Limitada</div></div></body></html>';
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function formatQuoteMoney(value, coin) {
+  const formatted = Number(value || 0).toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return coin === 'USD' ? '$' + formatted : '₡' + formatted;
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function serializeCell(value) {
+  return value instanceof Date ? value.toISOString() : String(value || '');
+}
+
+function serializeDateCell(value) {
+  if (!(value instanceof Date)) return String(value || '');
+  return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
