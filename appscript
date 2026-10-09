@@ -17,7 +17,7 @@ const QUOTE_HEADERS = [
   'CLIENT_NAME', 'CLIENT_EMAIL', 'CLIENT_PHONE', 'COIN', 'PRODUCT', 'CATEGORY',
   'CABYS', 'QUANTITY', 'UNIT_NET', 'LINE_NET', 'LINE_TAX', 'LINE_TOTAL',
   'ORDER_NET', 'ORDER_TAX', 'ORDER_TOTAL', 'COMMENTS', 'STATUS',
-  'CONVERTED_AT', 'SALE_ID', 'CONVERTED_DOC_TYPE', 'TIQUETE_NUMBER'
+  'CONVERTED_AT', 'CONVERTED_DOC_TYPE', 'UPDATED_AT'
 ];
 
 // ── doPost ───────────────────────────────────────────────────
@@ -34,6 +34,14 @@ function doPost(e) {
 
     if (payload.action === 'saveCotizacion') {
       return respondJSON(saveCotizacion(payload));
+    }
+
+    if (payload.action === 'updateCotizacion') {
+      return respondJSON(updateCotizacion(payload));
+    }
+
+    if (payload.action === 'updateCotizacionStatus') {
+      return respondJSON(updateCotizacionStatus(payload));
     }
 
     if (payload.action === 'convertCotizacion') {
@@ -522,9 +530,12 @@ function ensureCotizacionesSheet(ss) {
     sheet.setFrozenRows(1);
     return sheet;
   }
-  const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), QUOTE_HEADERS.length)).getValues()[0];
+  const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
   const missing = QUOTE_HEADERS.filter(header => headers.indexOf(header) === -1);
-  if (missing.length) throw new Error('La pestaña COTIZACIONES no tiene estas columnas: ' + missing.join(', '));
+  if (missing.length) {
+    sheet.getRange(1, sheet.getLastColumn() + 1, 1, missing.length).setValues([missing]);
+    sheet.getRange(1, sheet.getLastColumn() - missing.length + 1, 1, missing.length).setFontWeight('bold');
+  }
   return sheet;
 }
 
@@ -594,20 +605,107 @@ function saveCotizacion(payload) {
 
     quote.quoteNumber = nextCotizacionNumberUnlocked(quote.date);
     quote.createdAt = new Date().toISOString();
-    const rows = quote.items.map(item => [
-      quote.id, quote.quoteNumber, quote.createdAt, quote.date, 'Farm', quote.server,
-      quote.clientName, quote.clientEmail, quote.clientPhone, quote.coin,
-      item.product, item.category, item.cabys, item.qty, item.unitNet,
-      item.lineNet, item.lineTax, item.lineTotal,
-      quote.orderNet, quote.orderTax, quote.orderTotal, quote.comments, quote.status,
-      '', '', '', ''
-    ]);
-    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, QUOTE_HEADERS.length).setValues(rows);
+    quote.updatedAt = quote.createdAt;
+    const rows = buildCotizacionRows(quote, sheet);
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, sheet.getLastColumn()).setValues(rows);
   } finally {
     lock.releaseLock();
   }
 
-  let warning = '';
+  return { status: 'ok', quote, warning: sendCotizacionEmail(ss, quote, false) };
+}
+
+function updateCotizacion(payload) {
+  const quote = normalizeCotizacion(payload);
+  const ss = SpreadsheetApp.openById(SS_ID);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = ensureCotizacionesSheet(ss);
+    const values = sheet.getDataRange().getValues();
+    const h = quoteHeaderMap(sheet);
+    const matches = [];
+    values.slice(1).forEach((row, offset) => {
+      if (String(row[h.QUOTE_ID] || '').trim() === quote.id) matches.push({ row, number: offset + 2 });
+    });
+    if (!matches.length) throw new Error('Cotización no encontrada.');
+
+    const original = matches[0].row;
+    const currentStatus = normalizeStoredQuoteStatus(original[h.STATUS]);
+    if (currentStatus === 'Vendida') throw new Error('Una cotización vendida ya no se puede editar.');
+
+    quote.quoteNumber = String(original[h.QUOTE_NUMBER] || '');
+    quote.createdAt = serializeCell(original[h.CREATED_AT]);
+    quote.updatedAt = new Date().toISOString();
+    quote.status = 'Pendiente';
+
+    const rows = buildCotizacionRows(quote, sheet);
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, sheet.getLastColumn()).setValues(rows);
+    matches.sort((a, b) => b.number - a.number).forEach(match => sheet.deleteRow(match.number));
+  } finally {
+    lock.releaseLock();
+  }
+
+  return { status: 'ok', quote, warning: sendCotizacionEmail(ss, quote, true) };
+}
+
+function updateCotizacionStatus(payload) {
+  const quoteId = String(payload.quoteId || '').trim();
+  const requestedStatus = String(payload.status || '').trim();
+  if (!quoteId) throw new Error('Falta el ID de la cotización.');
+  if (requestedStatus !== 'Pendiente' && requestedStatus !== 'No concretada') throw new Error('Estado de cotización inválido.');
+
+  const ss = SpreadsheetApp.openById(SS_ID);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = ensureCotizacionesSheet(ss);
+    const values = sheet.getDataRange().getValues();
+    const h = quoteHeaderMap(sheet);
+    const matchingRows = [];
+    values.slice(1).forEach((row, offset) => {
+      if (String(row[h.QUOTE_ID] || '').trim() === quoteId) matchingRows.push({ row, number: offset + 2 });
+    });
+    if (!matchingRows.length) throw new Error('Cotización no encontrada.');
+    if (normalizeStoredQuoteStatus(matchingRows[0].row[h.STATUS]) === 'Vendida') {
+      throw new Error('Una cotización vendida no se puede reabrir desde el POS.');
+    }
+    const updatedAt = new Date().toISOString();
+    matchingRows.forEach(match => {
+      sheet.getRange(match.number, h.STATUS + 1).setValue(requestedStatus);
+      sheet.getRange(match.number, h.CONVERTED_AT + 1).setValue('');
+      sheet.getRange(match.number, h.CONVERTED_DOC_TYPE + 1).setValue('');
+      if (h.SALE_ID !== undefined) sheet.getRange(match.number, h.SALE_ID + 1).setValue('');
+      if (h.TIQUETE_NUMBER !== undefined) sheet.getRange(match.number, h.TIQUETE_NUMBER + 1).setValue('');
+      sheet.getRange(match.number, h.UPDATED_AT + 1).setValue(updatedAt);
+    });
+    return { status: 'ok', quoteId, quoteStatus: requestedStatus };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function buildCotizacionRows(quote, sheet) {
+  const h = quoteHeaderMap(sheet);
+  const width = sheet.getLastColumn();
+  return quote.items.map(item => {
+    const row = new Array(width).fill('');
+    const put = (header, value) => { row[h[header]] = value; };
+    put('QUOTE_ID', quote.id); put('QUOTE_NUMBER', quote.quoteNumber);
+    put('CREATED_AT', quote.createdAt); put('DATE', quote.date); put('MODULE', 'Farm');
+    put('RESPONSIBLE', quote.server); put('CLIENT_NAME', quote.clientName);
+    put('CLIENT_EMAIL', quote.clientEmail); put('CLIENT_PHONE', quote.clientPhone);
+    put('COIN', quote.coin); put('PRODUCT', item.product); put('CATEGORY', item.category);
+    put('CABYS', item.cabys); put('QUANTITY', item.qty); put('UNIT_NET', item.unitNet);
+    put('LINE_NET', item.lineNet); put('LINE_TAX', item.lineTax); put('LINE_TOTAL', item.lineTotal);
+    put('ORDER_NET', quote.orderNet); put('ORDER_TAX', quote.orderTax); put('ORDER_TOTAL', quote.orderTotal);
+    put('COMMENTS', quote.comments); put('STATUS', quote.status);
+    put('UPDATED_AT', quote.updatedAt || quote.createdAt);
+    return row;
+  });
+}
+
+function sendCotizacionEmail(ss, quote, isUpdate) {
   try {
     const staffEmail = getStaffEmail(ss, quote.server);
     const html = buildCotizacionDocumentHtml(quote);
@@ -616,18 +714,23 @@ function saveCotizacion(payload) {
       .setName(quote.quoteNumber + '.pdf');
     const options = { htmlBody: html, attachments: [pdf], name: 'Tierramor POS' };
     if (staffEmail) options.cc = staffEmail;
+    const prefix = isUpdate ? 'Cotización actualizada ' : 'Cotización ';
     GmailApp.sendEmail(
       quote.clientEmail,
-      'Cotización ' + quote.quoteNumber + ' — Tierramor Farm',
+      prefix + quote.quoteNumber + ' — Tierramor Farm',
       'Adjuntamos la cotización ' + quote.quoteNumber + ' de Tierramor Farm.',
       options
     );
-    if (!staffEmail) warning = 'No se encontró el correo del responsable en STAFF.';
+    return staffEmail ? '' : 'No se encontró el correo del responsable en STAFF.';
   } catch (mailErr) {
     console.error('Error enviando cotización: ' + mailErr.toString());
-    warning = 'La cotización se guardó, pero el correo no pudo enviarse.';
+    return 'La cotización se guardó, pero el correo no pudo enviarse.';
   }
-  return { status: 'ok', quote, warning };
+}
+
+function normalizeStoredQuoteStatus(value) {
+  const status = String(value || 'Pendiente').trim();
+  return status === 'Convertida' ? 'Vendida' : status;
 }
 
 function listCotizaciones(ss) {
@@ -655,11 +758,10 @@ function listCotizaciones(ss) {
         orderTax: Number(row[h.ORDER_TAX]) || 0,
         orderTotal: Number(row[h.ORDER_TOTAL]) || 0,
         comments: String(row[h.COMMENTS] || ''),
-        status: String(row[h.STATUS] || 'Pendiente'),
+        status: normalizeStoredQuoteStatus(row[h.STATUS]),
         convertedAt: serializeCell(row[h.CONVERTED_AT]),
-        saleId: String(row[h.SALE_ID] || ''),
         convertedDocType: String(row[h.CONVERTED_DOC_TYPE] || ''),
-        convertedTiqueteNumber: String(row[h.TIQUETE_NUMBER] || ''),
+        updatedAt: serializeCell(row[h.UPDATED_AT]),
         items: []
       };
     }
@@ -706,14 +808,8 @@ function convertCotizacion(payload) {
     });
     if (!matchingRows.length) throw new Error('Cotización no encontrada.');
 
-    const currentStatus = String(matchingRows[0].values[h.STATUS] || 'Pendiente');
-    const existingSaleId = String(matchingRows[0].values[h.SALE_ID] || '');
-    if (currentStatus === 'Convertida') {
-      if (existingSaleId === String(entry.id)) {
-        return { status: 'ok', idempotent: true, tiqNum: String(matchingRows[0].values[h.TIQUETE_NUMBER] || '') };
-      }
-      throw new Error('Esta cotización ya fue convertida en otra venta.');
-    }
+    const currentStatus = normalizeStoredQuoteStatus(matchingRows[0].values[h.STATUS]);
+    if (currentStatus === 'Vendida') throw new Error('Esta cotización ya fue marcada como vendida.');
     if (currentStatus !== 'Pendiente') throw new Error('La cotización no está disponible para convertir.');
 
     const entrySheet = ss.getSheetByName(entry.coin === 'USD' ? 'ENTRIES DOL' : 'ENTRIES COL');
@@ -733,11 +829,12 @@ function convertCotizacion(payload) {
 
     const convertedAt = new Date().toISOString();
     matchingRows.forEach(match => {
-      quoteSheet.getRange(match.number, h.STATUS + 1).setValue('Convertida');
+      quoteSheet.getRange(match.number, h.STATUS + 1).setValue('Vendida');
       quoteSheet.getRange(match.number, h.CONVERTED_AT + 1).setValue(convertedAt);
-      quoteSheet.getRange(match.number, h.SALE_ID + 1).setValue(entry.id);
       quoteSheet.getRange(match.number, h.CONVERTED_DOC_TYPE + 1).setValue(docType);
-      quoteSheet.getRange(match.number, h.TIQUETE_NUMBER + 1).setValue(tiqNum);
+      if (h.SALE_ID !== undefined) quoteSheet.getRange(match.number, h.SALE_ID + 1).setValue('');
+      if (h.TIQUETE_NUMBER !== undefined) quoteSheet.getRange(match.number, h.TIQUETE_NUMBER + 1).setValue('');
+      quoteSheet.getRange(match.number, h.UPDATED_AT + 1).setValue(convertedAt);
     });
 
     notification = {
